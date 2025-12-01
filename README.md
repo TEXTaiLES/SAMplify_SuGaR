@@ -1,10 +1,10 @@
-# nephele
+# Nephele
 <p align="center">
   <img src="readme_images/nephele_logo_2.png" alt="Pipeline Image" width="400"/>
 </p>
 
 
-"nephele" is a system that processes images to generate 3D meshes without backgrounds. By combining **SAM2** (Surface-Aligned Mesh) and **SUGAR** (Surface-Aligned Gaussian Splatting), it aligns surfaces and creates efficient 3D models, perfect for applications requiring clean, background-free reconstructions.
+"Nephele" is a system that processes images to generate 3D meshes without backgrounds. By combining **SAM2** (Surface-Aligned Mesh) and **SUGAR** (Surface-Aligned Gaussian Splatting), it aligns surfaces and creates efficient 3D models, perfect for applications requiring clean, background-free reconstructions.
 #### Pipeline:
 
 
@@ -21,7 +21,7 @@ To get started with this project, follow these simple steps:
 Run the following command to clone the repository to your local machine:
 
 ```bash
-git clone --recurse-submodules https://gitlab.com/ilsp-xanthi-medialab/textailes/wp4/t4.5/nephele.git
+git clone --recurse-submodules https://github.com/TEXTaiLES/NEPHELE
 # If you forgot --recurse-submodules:
 git submodule update --init --recursive
 ```
@@ -31,7 +31,7 @@ git submodule update --init --recursive
 After cloning, go to the project folder:
 
 ```bash
-cd nephele
+cd NEPHELE
 ```
 
 
