@@ -21,14 +21,14 @@ To get started with this project, follow these simple steps:
 Run the following command to clone the repository to your local machine:
 
 ```bash
-git clone --recurse-submodules https://github.com/TEXTaiLES/NEPHELE
+git clone --recurse-submodules https://github.com/TEXTaiLES/SAMplify_SuGaR
 # If you forgot --recurse-submodules:
 git submodule update --init --recursive
 ```
 
 ### 2. Navigate to the project directory
 
-After cloning, go to the project folder:
+After cloning, go to the project folder, rename folder to "NEPHELE" and then:
 
 ```bash
 cd NEPHELE
