@@ -12,6 +12,8 @@ SAM2_PATH="${SAM2_PATH:-${nephele_PATH}/SAM2}"
 SUGAR_PATH="${SUGAR_PATH:-${nephele_PATH}/SUGAR/SuGaR}"
 COLMAP_OUT_PATH="${COLMAP_OUT_PATH:-${nephele_PATH}/colmap}"
 
+cd "$nephele_PATH"
+
 # Where SAM2 expects input/output INSIDE the container:
 IN_MNT_HOST="$SAM2_PATH/data/input"
 OUT_MNT_HOST="$SAM2_PATH/data/output"
@@ -36,7 +38,7 @@ on_error() {
 trap on_error ERR
 
 echo "======================================"
-echo " SAM2 stage runner"
+echo " SAM2 + COLMAP + SuGaR pipeline"
 echo " Dataset:          $DATASET_NAME"
 echo " SAM2_PATH:        $SAM2_PATH"
 echo " SUGAR_PATH:       $SUGAR_PATH"
@@ -54,6 +56,8 @@ command -v docker >/dev/null || { echo "Docker not found in PATH."; exit 1; }
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 DOCKER_BIN="${DOCKER_BIN:-docker}"   # no sudo
+# Export UID/GID so docker-compose can use them (compose variable interpolation)
+export HOST_UID HOST_GID
 
 # ====== Ensure mount folders exist (owned by you) ======
 mkdir -p "$IN_MNT_HOST" "$OUT_MNT_HOST" "$IN_MNT_HOST/$INPUT_SUBDIR"
@@ -85,7 +89,7 @@ else
 fi
 
 # ====== RUN SAM2 (picker + propagation) ======
-cd "$SAM2_PATH"
+
 echo "[*] Running SAM2 for dataset: $DATASET_NAME"
 echo "[*] INPUT (container): $INPUT_CONT"
 echo "[*] OUT   (container): $OUT_MNT_CONT"
@@ -102,7 +106,27 @@ if ss -ltn | awk '{print $4}' | grep -q ":${WEB_PORT}\$"; then
     fi
   done
 fi
+
+# If a sam2 container is running and already maps container port 5000,
+# prefer that host port so we don't pick a different port than the container exposes.
+if $DOCKER_BIN compose ps -q sam2 >/dev/null 2>&1; then
+  if [[ "$($DOCKER_BIN inspect -f '{{.State.Running}}' sam2 2>/dev/null || echo false)" == "true" ]]; then
+    MAPPED="$($DOCKER_BIN compose port sam2 5000 2>/dev/null || true)"
+    if [[ -n "$MAPPED" ]]; then
+      # MAPPED looks like 0.0.0.0:8092 or [::]:8092 — extract the port after the last ':'
+      HOST_PORT="${MAPPED##*:}"
+      if [[ -n "$HOST_PORT" ]]; then
+        echo "[*] sam2 is already running and maps container:5000 -> host:${HOST_PORT}; using that port"
+        WEB_PORT="$HOST_PORT"
+      fi
+    fi
+  fi
+fi
+
 echo "[*] Using WEB_PORT=$WEB_PORT"
+
+# Export chosen WEB_PORT so docker compose uses the same host port mapping
+export WEB_PORT
 
 PICKER_NAME="sam2picker_${DATASET_NAME}_${WEB_PORT}"
 $DOCKER_BIN rm -f "$PICKER_NAME" >/dev/null 2>&1 || true
@@ -121,28 +145,61 @@ rm -f "$DONE_FLAG" "$USE_EXISTING_FLAG"
 
 echo "[*] Starting Flask point picker for '$DATASET_NAME' on http://localhost:${WEB_PORT}/ ..."
 
+PICKER_SERVICE="sam2"
 
-$DOCKER_BIN run -d --name "$PICKER_NAME" --gpus all \
-  --user "${HOST_UID}:${HOST_GID}" \
-  --workdir /workspace \
-  -v "$SAM2_PATH":/workspace \
-  -v "$IN_MNT_HOST":/data/in \
-  -v "$OUT_MNT_HOST":/data/out \
-  -p 127.0.0.1:${WEB_PORT}:5000 \
-  -e DATASET_NAME="$DATASET_NAME" \
-  -e INPUT="/data/in/$DATASET_NAME" \
-  -e OUT="/data/out" \
-  -e INDEX_SUFFIX="$INDEX_SUFFIX" \
- -e HF_HOME="/data/out/.cache/huggingface" \
-  "${DOCKER_GUI_FLAGS[@]}" \
-  sam2:local \
-  bash -lc 'umask 0002; python3 app/point_picker_flask.py'
-exec 3>&1
+# Check whether the service/container already exists
+SERVICE_ID="$($DOCKER_BIN compose ps -q "$PICKER_SERVICE" 2>/dev/null || true)"
+if [[ -n "$SERVICE_ID" ]]; then
+  # Container exists — check whether it's running
+  if [[ "$($DOCKER_BIN inspect -f '{{.State.Running}}' "$PICKER_SERVICE" 2>/dev/null || echo false)" == "true" ]]; then
+    echo "[*] $PICKER_SERVICE already running; picker should be at http://localhost:$WEB_PORT/"
+    # Start the picker only if it's not already running inside the container
+    if $DOCKER_BIN compose exec -T "$PICKER_SERVICE" bash -lc 'pgrep -f point_picker_flask.py >/dev/null 2>&1 || ps aux | grep -v grep | grep -q point_picker_flask.py' >/dev/null 2>&1; then
+      echo "[*] Picker process already running inside $PICKER_SERVICE"
+    else
+      echo "[*] Starting picker inside running $PICKER_SERVICE container"
+      $DOCKER_BIN compose exec -T "$PICKER_SERVICE" bash -lc "
+        export DATASET_NAME=\"$DATASET_NAME\"
+        export INPUT=\"/data/in/$DATASET_NAME\"
+        export OUT=\"/data/out\"
+        export INDEX_SUFFIX=\"$INDEX_SUFFIX\"
+        export HF_HOME=/data/out/.cache/huggingface
+        umask 0002
+        nohup python3 -u /workspace/app/point_picker_flask.py > /workspace/logs/picker_${DATASET_NAME}.log 2>&1 &
+      "
+    fi
+  else
+    echo "[*] $PICKER_SERVICE exists but is stopped — starting it"
+    $DOCKER_BIN compose start "$PICKER_SERVICE"
+    echo "[*] Started $PICKER_SERVICE; starting picker"
+    $DOCKER_BIN compose exec -T "$PICKER_SERVICE" bash -lc "
+      export DATASET_NAME=\"$DATASET_NAME\"
+      export INPUT=\"/data/in/$DATASET_NAME\"
+      export OUT=\"/data/out\"
+      export INDEX_SUFFIX=\"$INDEX_SUFFIX\"
+      export HF_HOME=/data/out/.cache/huggingface
+      umask 0002
+      nohup python3 -u /workspace/app/point_picker_flask.py > /workspace/logs/picker_${DATASET_NAME}.log 2>&1 &
+    "
+  fi
+else
+  echo "[*] $PICKER_SERVICE not found — creating and starting it"
+  $DOCKER_BIN compose up -d "$PICKER_SERVICE"
+  echo "[*] Created and started $PICKER_SERVICE; starting picker"
+  $DOCKER_BIN compose exec -T "$PICKER_SERVICE" bash -lc "
+    export DATASET_NAME=\"$DATASET_NAME\"
+    export INPUT=\"/data/in/$DATASET_NAME\"
+    export OUT=\"/data/out\"
+    export INDEX_SUFFIX=\"$INDEX_SUFFIX\"
+    export HF_HOME=/data/out/.cache/huggingface
+    umask 0002
+    nohup python3 -u /workspace/app/point_picker_flask.py > /workspace/logs/picker_${DATASET_NAME}.log 2>&1 &
+  "
+fi
+
 echo "[*] Open to select points: http://localhost:${WEB_PORT}/" | tee /dev/tty
 
-
 echo "[*] Waiting for decision/save → $DONE_FLAG"
-
 while :; do
   if [[ -f "$DONE_FLAG" ]]; then
     echo "[*] Picker signaled DONE_FLAG. Proceeding..."
@@ -150,9 +207,6 @@ while :; do
   fi
   sleep 1
 done
-
-
-
 
 $DOCKER_BIN stop "$PICKER_NAME" >/dev/null 2>&1 || true
 $DOCKER_BIN rm -f "$PICKER_NAME" >/dev/null 2>&1 || true
@@ -174,33 +228,30 @@ fi
 
 rm -f "$DONE_FLAG" "$USE_EXISTING_FLAG"
 
-
-
-
 echo "[*] Running SAM2 propagation using saved prompts..."
-$DOCKER_BIN run --rm --gpus all \
-  --user "${HOST_UID}:${HOST_GID}" \
-  --workdir /workspace \
-  -v "$SAM2_PATH":/workspace \
-  -v "$IN_MNT_HOST":/data/in \
-  -v "$OUT_MNT_HOST":/data/out \
-  -e DATASET_NAME="$DATASET_NAME" \
-  -e INPUT="/data/in/$DATASET_NAME" \
-  -e OUT="/data/out" \
-  -e INDEX_SUFFIX="$INDEX_SUFFIX" \
-  -e QUIET=0 \
-  -e MPLBACKEND=Agg \
-  -e HF_HOME="/data/out/.cache/huggingface" \
-  sam2:local \
-  bash -lc 'umask 0002; python3 -u /workspace/app/video_predict.py'
+# Run propagation inside the already-running sam2 container so we reuse the image/container
+$DOCKER_BIN compose exec -T sam2 bash -lc "
+  export DATASET_NAME=\"$DATASET_NAME\"
+  export INPUT=\"/data/in/$DATASET_NAME\"
+  export OUT=\"/data/out\"
+  export INDEX_SUFFIX=\"$INDEX_SUFFIX\"
+  export QUIET=0
+  export MPLBACKEND=Agg
+  export HF_HOME=/data/out/.cache/huggingface
+  umask 0002
+  python3 -u /workspace/app/video_predict.py
+"
 echo "[*] SAM2 finished successfully (until here)."
+
+# ====== COLMAP STAGE ======
 $DOCKER_BIN pull colmap/colmap
 
 if [ -f "$COLMAP_OUT_PATH/run_colmap.sh" ]; then
   chmod +x "$COLMAP_OUT_PATH/run_colmap.sh"
 else
-  echo "[*] run_colmap.sh not found in $nephele_PATH (skipping copy)"
+  echo "[*] run_colmap.sh not found in $COLMAP_OUT_PATH (skipping copy)"
 fi
+
 cd "$COLMAP_OUT_PATH"
 
 # Ensure COLMAP dirs exist and are writable by you
@@ -218,7 +269,6 @@ IMAGES_DST="$COLMAP_OUT_PATH/input/${DATASET_NAME}"
 MASKS_DST="$COLMAP_OUT_PATH/input/${DATASET_NAME}_indexed"
 OUT_DST="$COLMAP_OUT_PATH/output/${DATASET_NAME}"
 
-
 # ---- ensure dest dirs ----
 mkdir -p "$IMAGES_DST" "$MASKS_DST" "$OUT_DST"
 
@@ -233,7 +283,6 @@ rsync -a --delete \
   --exclude 'preview/**' \
   --include '*.jpg' --include '*.jpeg' --include '*.png' --exclude '*' \
   "${MASKS_SRC}/" "${MASKS_DST}/"
-
 
 echo "Copied images: $(find "$IMAGES_DST" -maxdepth 1 -type f | wc -l)"
 echo "Copied masks : $(find "$MASKS_DST" -maxdepth 1 -type f | wc -l)"
@@ -251,7 +300,7 @@ if [ -f "$nephele_PATH/run_sugar_pipeline_with_sam.sh" ]; then
   cp -f "$nephele_PATH/run_sugar_pipeline_with_sam.sh" "$SUGAR_PATH"
   chmod +x "$SUGAR_PATH/run_sugar_pipeline_with_sam.sh"
 else
-  echo "[*] run_sugar_pipeline_with_sam.sh not found in $nephele__PATH (skipping copy)"
+  echo "[*] run_sugar_pipeline_with_sam.sh not found in $nephele_PATH (skipping copy)"
 fi
 
 if [ -f "$nephele_PATH/Dockerfile_final" ]; then
@@ -264,12 +313,12 @@ else
 fi
 
 # --- run SUGAR (pass DATASET_NAME as env) ---
-echo "[*] Running Sugar pipeline for dataset: $DATASET_NAME..."
+echo "[*] Running SuGaR pipeline for dataset: $DATASET_NAME..."
 cd "$SUGAR_PATH"
+
 DATASET_NAME="$DATASET_NAME" \
 SUGAR_PATH="$SUGAR_PATH" \
-nephele__PATH="$nephele_PATH"
-
+nephele_PATH="$nephele_PATH" \
 bash ./run_sugar_pipeline_with_sam.sh "$DATASET_NAME"
 
 echo "[*] Pipeline completed successfully!"
