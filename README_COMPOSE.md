@@ -39,5 +39,3 @@ Notes & tips
 - Reuse containers: `docker compose exec -T <service>` is used to run commands inside running containers. This reuses the container and preserves any caches or downloads.
 - GPU support: make sure NVIDIA Container Toolkit is installed. `docker compose` must be run on a system with GPU support and the Compose file uses `runtime: nvidia`.
 - If a port is already in use, change `WEB_PORT` in `.env` before starting services.
-
-If you want I can also add a short helper script to: build, start services and tail logs.
