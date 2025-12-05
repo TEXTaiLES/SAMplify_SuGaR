@@ -13,7 +13,7 @@ Quick start
 1. Copy example env and edit values (optional):
 
 ```bash
-cd /home/vaia/NEPHELE
+cd ../NEPHELE
 cp .env.example .env
 # edit .env to set DATASET_NAME and WEB_PORT if desired
 ```
