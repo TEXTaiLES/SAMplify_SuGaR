@@ -567,31 +567,30 @@ def handle_job(job: dict) -> None:
             if decision in ("confirm", "use_existing"):
                 break
 
-        # Ensure run_pipeline.sh has a .model file to read.
-        # Priority:
-        #   1. FORCE_MODEL env — operator override: this worker runs a fixed
-        #      model for every job, regardless of the job field or any existing
-        #      .model file. Needed while the upstream (HESTIA/UI) can't yet emit
-        #      a given model (e.g. fastpgsr) — set FORCE_MODEL=fastpgsr in .env.
-        #   2. local .model file (set by welcome page, most recent user intent).
-        #   3. the job's model field (baked in at job-creation time, may be stale).
+        # Resolve the reconstruction model and (re)write the .model file that
+        # run_pipeline.sh reads. Priority:
+        #   1. FORCE_MODEL env — operator override, fixed model for every job.
+        #   2. the job's model field from HESTIA — authoritative for vm_comms.
+        #   3. an existing .model file — fallback only for local runs where the
+        #      job carries no model.
+        # The .model file is refreshed every run, so a stale value can never
+        # override HESTIA's choice (previously the file won, which silently
+        # pinned datasets to whatever model their first job used).
+        _VALID = ("sugar", "pgsr", "fastpgsr")
         model_file = input_dir / ".model"
         force_model = (os.environ.get("FORCE_MODEL") or "").strip()
-        if force_model in ("sugar", "pgsr", "fastpgsr"):
-            model = force_model
-            model_file.write_text(model, encoding="utf-8")
-            log.info("job %s: model=%s (FORCE_MODEL override)", job_id, model)
-        elif model_file.is_file():
-            model = model_file.read_text(encoding="utf-8").strip()
-            if model not in ("sugar", "pgsr", "fastpgsr"):
-                model = "sugar"
-            log.info("job %s: model=%s (from existing .model file)", job_id, model)
+        if force_model in _VALID:
+            model, source = force_model, "FORCE_MODEL override"
         else:
-            model = (job.get("model") or "sugar").strip()
-            if model not in ("sugar", "pgsr", "fastpgsr"):
-                model = "sugar"
-            model_file.write_text(model, encoding="utf-8")
-            log.info("job %s: model=%s (written from job — file was missing)", job_id, model)
+            model = (job.get("model") or "").strip()
+            source = "from HESTIA job"
+            if model not in _VALID and model_file.is_file():
+                model = model_file.read_text(encoding="utf-8").strip()
+                source = "from .model file (job had none)"
+            if model not in _VALID:
+                model, source = "sugar", "default"
+        model_file.write_text(model, encoding="utf-8")
+        log.info("job %s: model=%s (%s)", job_id, model, source)
 
         # Steps 10 + 12: run the pipeline and publish the result.
         run_pipeline(job, dataset, indexed_dir)
