@@ -288,12 +288,9 @@ cd "$SUGAR_PATH"
 if ! $DOCKER_BIN image inspect sugar-final >/dev/null 2>&1; then
 
 $DOCKER_BIN build \
-
---build-arg USER_ID=$(id -u) \
-
---build-arg GROUP_ID=$(id -g) \
-
--t sugar-final -t sugar:local -f Dockerfile_final .
+	--build-arg USER_ID=$(id -u) \
+	--build-arg GROUP_ID=$(id -g) \
+	-t sugar-final -t sugar:local -f Dockerfile_final .
 
 else
 
@@ -438,11 +435,8 @@ echo " DONE! Dataset conversion completed."
 echo "[*] STEP 3b: Convert undistorted images to RGBA PNG"
 
 python3 "$SUGAR_PATH/convert_to_rgba.py" \
-
 "$SUGAR_DATA_ROOT/images" \
-
 "$SUGAR_DATA_ROOT/sparse/0/images.bin" \
-
 2 "${BLACK_THRESHOLD:-15}"
 
 # ========= 4. SuGaR training =========
@@ -450,11 +444,8 @@ python3 "$SUGAR_PATH/convert_to_rgba.py" \
 echo "[*] STEP 4: SuGaR training"
 
 run_in_sugar \
-
 "/app/run_with_xvfb.sh python train_full_pipeline.py \
-
 -s /app/data -r dn_consistency --refinement_time \"$REFINEMENT_TIME\" \
-
 --export_obj True --postprocess_mesh True --postprocess_density_threshold 0.1 --postprocess_iterations 5"
 
 echo "======================================"
@@ -506,17 +497,11 @@ ln -sfn "$OUT_ROOT" /tmp/output
 cd /tmp
 
 PYTHONPATH=/tmp:/app:/app/gaussian_splatting:$PYTHONPATH \
-
 python -m extract_refined_mesh_with_texture \
-
 -s /app/data \
-
 -c "$VANILLA_GS" \
-
 -m "$REF" \
-
 -o "$OUT_ROOT/refined_mesh/data" \
-
 --square_size 24
 
 '
