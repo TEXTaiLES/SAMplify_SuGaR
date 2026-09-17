@@ -410,6 +410,20 @@ fi
 
 }
 
+# Run a project python helper inside the sugar image (which has numpy/PIL/scipy)
+# instead of the host python3, which does not. Mounts the same data/output dirs
+# as the training container plus the helper script itself (so a stale prebuilt
+# image still runs the current override).
+run_py_in_sugar() {
+	local script="$1"; shift
+	$DOCKER_BIN run --rm -u "${HOST_UID}:${HOST_GID}" -e HOME=/tmp \
+		-v "$SUGAR_DATA_ROOT:/app/data" \
+		-v "$SUGAR_OUT_ROOT:/app/output" \
+		-v "$SUGAR_PATH/$script:/app/$script:ro" \
+		sugar:local bash -lc \
+		"source /opt/conda/etc/profile.d/conda.sh && conda activate sugar && python /app/$script $*"
+}
+
 # ========= 3. Convert (COLMAP format → SuGaR) =========
 
 echo "[*] STEP 3: convert.py"
@@ -434,10 +448,10 @@ echo " DONE! Dataset conversion completed."
 
 echo "[*] STEP 3b: Convert undistorted images to RGBA PNG"
 
-python3 "$SUGAR_PATH/convert_to_rgba.py" \
-"$SUGAR_DATA_ROOT/images" \
-"$SUGAR_DATA_ROOT/sparse/0/images.bin" \
-2 "${BLACK_THRESHOLD:-15}"
+run_py_in_sugar convert_to_rgba.py \
+	/app/data/images \
+	/app/data/sparse/0/images.bin \
+	2 "${BLACK_THRESHOLD:-15}"
 
 # ========= 4. SuGaR training =========
 
@@ -516,13 +530,18 @@ BOTTOM_CROP_PCT="${BOTTOM_CROP_PCT:-22}"
 
 MESH_OBJ=$(find "$SUGAR_OUT_ROOT/refined_mesh" -name "*_postprocessed.obj" | grep -v artifacts | grep -v before_cleanup | head -n1 || true)
 
-if [[ -n "$MESH_OBJ" ]]; then
+if [[ -n "$MESH_OBJ" && -f "$SUGAR_PATH/cleanup_mesh.py" ]]; then
 
-python3 "$SUGAR_PATH/cleanup_mesh.py" "$MESH_OBJ" 0.05 "$BOTTOM_CROP_PCT" 2
+MESH_OBJ_CONT="/app/output/${MESH_OBJ#"$SUGAR_OUT_ROOT"/}"
+run_py_in_sugar cleanup_mesh.py "$MESH_OBJ_CONT" 0.05 "$BOTTOM_CROP_PCT" 2
+
+elif [[ -z "$MESH_OBJ" ]]; then
+
+echo "[!] No postprocessed .obj found in refined_mesh, skipping cleanup"
 
 else
 
-echo "[!] No postprocessed .obj found in refined_mesh, skipping cleanup"
+echo "[i] cleanup_mesh.py not present — skipping optional mesh cleanup (refined mesh already written)"
 
 fi
 
