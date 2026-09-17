@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 
 from .metrics import evaluate, load
+from .report import html_report
 from .visualize import heatmap
 
 
@@ -20,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="accuracy threshold in scene units "
                         "(default: 1%% of reference bbox diagonal)")
     p.add_argument("--no-align", action="store_true", help="skip ICP alignment")
+    p.add_argument("--no-html", action="store_true", help="skip the HTML report")
     return p
 
 
@@ -36,6 +38,11 @@ def main(argv=None) -> None:
     out = heatmap(points, distances, vmax=3.0 * result.tolerance,
                   out_path=args.out_dir / "error_heatmap.ply")
 
+    report = None
+    if not args.no_html:
+        report = html_report(result, points, distances, args.reference, args.test,
+                             out_path=args.out_dir / "report.html")
+
     print(f"\nreference   {args.reference}")
     print(f"test        {args.test}")
     if result.fitness is not None:
@@ -47,7 +54,11 @@ def main(argv=None) -> None:
     print(f"  Hausdorff   {result.hausdorff:.4g}")
     print(f"  Chamfer     {result.chamfer:.4g}")
     print(f"  within tol  {100.0 * result.within_tol:.1f}%")
-    print(f"\nheatmap -> {out}\n")
+    print(f"\nheatmap -> {out}")
+    if not args.no_html:
+        print(f"report  -> {report}" if report
+              else "report  -> skipped (pip install plotly)")
+    print()
 
 
 if __name__ == "__main__":

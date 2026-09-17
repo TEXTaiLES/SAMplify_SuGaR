@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Geometric-accuracy evaluation for reconstructed meshes"
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = ["open3d>=0.17", "numpy"]
+dependencies = ["open3d>=0.17", "numpy", "plotly>=5"]
 
 [project.scripts]
 evaluate-meshes = "mesheval.cli:main"

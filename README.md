@@ -39,15 +39,21 @@ Equivalent: `python -m mesheval reference.ply test.obj`.
 | Chamfer | bidirectional mean distance (standard 3DGS benchmark metric) |
 | within tol | % of surface within the accuracy threshold |
 
-`results/error_heatmap.ply` — the test mesh coloured green (accurate) to red
-(far from reference). Open in CloudCompare or MeshLab.
+Written to `results/`:
+
+- `report.html` — self-contained page: metrics table, error histogram, and an
+  **interactive 3D heatmap** (drag to rotate). Open it in any browser.
+- `error_heatmap.ply` — the coloured point cloud, for CloudCompare / MeshLab.
+
+Pass `--no-html` to skip the report.
 
 ## Layout
 
 ```
 mesheval/
 ├── metrics.py      # alignment + surface-distance metrics
-├── visualize.py    # error heatmap
+├── visualize.py    # error-heatmap point cloud
+├── report.py       # self-contained HTML report
 └── cli.py          # command-line entry point
 ```
 
