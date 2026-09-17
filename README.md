@@ -57,6 +57,32 @@ mesheval/
 └── cli.py          # command-line entry point
 ```
 
+## Photogrammetry reference (`make_reference.sh`)
+
+Build a classic photogrammetry mesh from an existing COLMAP reconstruction —
+COLMAP dense MVS + Poisson meshing — to compare *against* the splatting meshes.
+Runs inside the CUDA `colmap/colmap:latest` image (no build needed):
+
+```bash
+./make_reference.sh <images_dir> <sparse_dir> <output_dir>
+# e.g. object-only reference for the statue, same frame as the splat meshes:
+./make_reference.sh \
+  ../SAMplify_SuGaR/SAM2/data/output/statue_indexed_masked \
+  ../SAMplify_SuGaR/colmap/output/statue/sparse/0 \
+  results/statue_reference
+```
+
+Output: `<output_dir>/meshed-poisson.ply`. Because it reuses the same COLMAP
+poses, it's in the same frame as SuGaR/PGSR/Fast-PGSR meshes, so:
+
+```bash
+python -m mesheval results/statue_reference/meshed-poisson.ply \
+  ../SAMplify_SuGaR/FASTPGSR/outputs/statue/mesh/tsdf_fusion_post.obj --no-align
+```
+
+Needs a CUDA GPU (dense stereo is GPU-only). Use the **masked** images so the
+reference is object-only and comparable to the background-free splat meshes.
+
 ## Notes
 
 - Meshes from SuGaR / PGSR / Fast-PGSR built on the **same COLMAP** already
