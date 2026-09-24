@@ -99,9 +99,12 @@ def _cached_access_token() -> str | None:
     return tok
 
 
-# Directus account that should default to the shared demo dataset instead of
+# Directus accounts that should default to the shared demo dataset instead of
 # starting in setup mode — see is_demo_user() / config.DEMO_DATASET_NAME.
-DEMO_USER_EMAIL = "mednight.athenarc@sample.com"
+DEMO_USER_EMAILS = {
+    "mednight.athenarc@sample.com",
+    "mednight.certh@sample.com",
+}
 
 
 def _ensure_user_id(access_token: str) -> None:
@@ -152,7 +155,7 @@ def is_demo_user() -> bool:
     """True for the one account that should default to the shared demo
     dataset rather than starting in setup mode. Auth-only: there's no email
     to check without it, so this is always False when auth is disabled."""
-    return session.get("user_email", "") == DEMO_USER_EMAIL
+    return session.get("user_email", "") in DEMO_USER_EMAILS
 
 
 def init_auth(app):

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-# The one pre-built dataset the demo account (auth.DEMO_USER_EMAIL) defaults
+# The one pre-built dataset the demo accounts (auth.DEMO_USER_EMAILS) default
 # to instead of starting in setup mode. This is only ever used as a
 # *default* when that visitor has no active-dataset choice of their own yet
 # (see routes._helpers.cfg) — they can still start a fresh dataset normally.
