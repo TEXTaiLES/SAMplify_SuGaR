@@ -5,34 +5,31 @@ Gaussian-splatting backend (SuGaR / PGSR / Fast-PGSR) against a more-trusted
 reference — another backend, or a COLMAP-dense photogrammetry mesh — and get
 quantitative metrics plus a visual error heatmap.
 
-## I have two models — how do I compare them?
+## Compare two models
 
-**1. Do they come from the same COLMAP reconstruction?** (e.g. two backends
-run on the same dataset in the SAMplify_SuGaR pipeline — SuGaR vs. PGSR vs.
-Fast-PGSR.) → use **`mesheval`**, below.
+1. **Pick the reference.** Whichever mesh you trust more (e.g. the classic
+   PGSR output, or a photogrammetry mesh) is the reference; the other is the
+   one being measured.
 
-```bash
-python -m mesheval model_a.ply model_b.obj --no-align
-```
-Whichever mesh you consider more trustworthy goes first (it's the
-reference); the other is what gets measured against it.
+2. **Pick the tool.**
+   - Same COLMAP reconstruction behind both (e.g. two backends run on the
+     same dataset in the SAMplify_SuGaR pipeline — SuGaR vs. PGSR vs.
+     Fast-PGSR):
+     ```bash
+     python -m mesheval reference.ply test.obj --no-align
+     ```
+   - Different source or scale (e.g. one is a PyBullet simulation, or a scan
+     from a different tool):
+     ```bash
+     python surface_eval/evaluate_surface.py reference.ply test.obj
+     ```
+   - Not sure which applies? Run the `mesheval` command first and check the
+     printed **ICP fitness**: close to 1.0 → same frame, done; low (e.g.
+     < 0.5) → they don't share a frame, rerun with `surface_eval` instead.
+     Full option reference: [`surface_eval/README.md`](surface_eval/README.md).
 
-**2. Different source/scale — e.g. one is a PyBullet simulation, a scan from
-a different tool, or you're not sure they share a frame?** → use
-**[`surface_eval`](surface_eval/README.md)** instead, which adds a
-pre-alignment step:
-
-```bash
-python surface_eval/evaluate_surface.py model_a.ply model_b.obj
-```
-
-**3. Not sure?** Run `mesheval` first (step 1). Check the printed **ICP
-fitness** — close to 1.0 means they aligned cleanly (same frame, output is
-trustworthy); low (e.g. < 0.5) means they don't actually share a frame and
-you should redo it with `surface_eval` instead.
-
-Either way, open the `report.html` it writes (see
-[Viewing a report](#viewing-a-report) below) for the full picture.
+3. **Read the result.** Open the `report.html` it writes — see
+   [Viewing a report](#viewing-a-report) below.
 
 ## Install
 
