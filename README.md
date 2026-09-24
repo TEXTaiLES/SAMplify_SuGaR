@@ -58,12 +58,30 @@ Equivalent: `python -m mesheval reference.ply test.obj`.
 
 ## Output
 
-| Metric | Meaning |
-|--------|---------|
-| mean / median / RMS | average surface distance, test → reference |
-| Hausdorff | worst-case local error (floaters, missing parts) |
-| Chamfer | bidirectional mean distance (standard 3DGS benchmark metric) |
-| within tol | % of surface within the accuracy threshold |
+Every metric below is built from the same base measurement, the **surface
+distance**: for each sampled point on the test mesh, the distance to the
+*nearest point on the reference mesh's surface* — true point-to-triangle
+distance, not just distance to the nearest sampled point.
+
+`mesheval`:
+
+| Metric | Definition | Read it as |
+|--------|------------|------------|
+| **mean** | average of all distances | overall accuracy in one number |
+| **median** | middle value once sorted | typical accuracy — unlike mean, not skewed by a few bad points |
+| **RMS** | √(mean(distance²)) | penalises large errors more than mean does; `mean ≪ RMS` is a sign of localised outliers, not uniform noise |
+| **Hausdorff** | the single largest distance found (either direction) | worst-case error — one floater or missing chunk can dominate this |
+| **Chamfer** | mean(test→ref) + mean(ref→test) | bidirectional average; the standard accuracy metric in 3DGS papers, penalises both extra *and* missing geometry |
+| **within tolerance** | % of points closer than the threshold (default `-t`: 1% of the reference's bounding-box diagonal) | the practical "how much of the surface is actually good" number |
+
+`surface_eval` reports a different, finer set:
+
+| Metric | Definition | Read it as |
+|--------|------------|------------|
+| **perfect / tolerable / large** | 3 buckets by distance: `< 0.5%` / `0.5–1.5%` / `> 1.5%` of the reference's extent | more granular than a single within-tolerance cutoff |
+| **coverage** | % of the *reference* surface with a close match on the test mesh | catches holes in the test mesh — missing geometry doesn't show up in mean/median, which are measured the other direction |
+| **Hausdorff (p95)** | the 95th-percentile distance, not the absolute max | worst-case error with the top 5% of outliers excluded — raw Hausdorff is one stray point away from meaningless |
+| **ICP fitness** | fraction of points with a close correspondence after alignment (0–1) | sanity check on the *alignment*, not mesh accuracy — low fitness (≲ 0.5) usually means the two meshes don't actually share a frame |
 
 Written to `results/`:
 
