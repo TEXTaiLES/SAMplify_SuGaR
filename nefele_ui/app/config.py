@@ -13,9 +13,18 @@ changes for that one user without ever being visible to anyone else.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+# The one pre-built dataset the demo account (auth.DEMO_USER_EMAIL) defaults
+# to instead of starting in setup mode. This is only ever used as a
+# *default* when that visitor has no active-dataset choice of their own yet
+# (see routes._helpers.cfg) — they can still start a fresh dataset normally.
+DEMO_DATASET_NAME = "u2a6f4bf6_dress_demo"
+
+_NAMESPACED_NAME_RE = re.compile(r"^u[0-9a-f]{8}_(.+)$")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -71,17 +80,16 @@ class Config:
 
     @property
     def display_name(self) -> str:
-        """``dataset_name`` with the internal per-user namespace prefix
-        stripped, for showing to the owning user. Everything that touches
-        disk, HESTIA, or vm_comms must keep using ``dataset_name`` — this is
-        cosmetic only."""
-        if self.user_id:
-            from .services.uploads import user_scoped_name
-
-            prefix = user_scoped_name(self.user_id, "")
-            if self.dataset_name.startswith(prefix):
-                return self.dataset_name[len(prefix):]
-        return self.dataset_name
+        """``dataset_name`` with its ``u<hash>_`` namespace prefix stripped,
+        for showing to whoever is viewing it. Matches the prefix shape
+        regardless of *whose* hash it is — a viewer can legitimately see a
+        dataset namespaced under someone else's id (e.g. the demo account
+        viewing DEMO_DATASET_NAME) and this is purely cosmetic, not an
+        ownership check, so there's no reason to restrict it to "my own"
+        prefix. Everything that touches disk, HESTIA, or vm_comms must keep
+        using ``dataset_name`` itself."""
+        m = _NAMESPACED_NAME_RE.match(self.dataset_name)
+        return m.group(1) if m else self.dataset_name
 
     @property
     def input_dir(self) -> Path:

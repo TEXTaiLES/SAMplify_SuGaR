@@ -99,24 +99,31 @@ def _cached_access_token() -> str | None:
     return tok
 
 
+# Directus account that should default to the shared demo dataset instead of
+# starting in setup mode — see is_demo_user() / config.DEMO_DATASET_NAME.
+DEMO_USER_EMAIL = "mednight.athenarc@sample.com"
+
+
 def _ensure_user_id(access_token: str) -> None:
-    """Cache the Directus account id in the session so per-user isolation
-    (active dataset, dataset naming) can key off a real identity instead of
-    an anonymous per-browser session. No-op once already cached — the id
-    never changes for a given account."""
+    """Cache the Directus account id + email in the session so per-user
+    isolation (active dataset, dataset naming) can key off a real identity
+    instead of an anonymous per-browser session. No-op once already cached —
+    neither value changes for a given account."""
     if session.get("user_id"):
         return
     try:
         r = requests.get(
             f"{DIRECTUS_URL}/users/me",
             headers={"Authorization": f"Bearer {access_token}"},
-            params={"fields": "id"},
+            params={"fields": "id,email"},
             timeout=8,
         )
         if r.status_code == 200:
-            uid = (r.json().get("data") or {}).get("id")
+            data = r.json().get("data") or {}
+            uid = data.get("id")
             if uid:
                 session["user_id"] = uid
+                session["user_email"] = data.get("email") or ""
     except Exception as e:
         print("users/me fetch failed:", e, flush=True)
 
@@ -139,6 +146,13 @@ def current_user_id() -> str:
         uid = f"anon-{uuid.uuid4().hex[:16]}"
         session["anon_id"] = uid
     return uid
+
+
+def is_demo_user() -> bool:
+    """True for the one account that should default to the shared demo
+    dataset rather than starting in setup mode. Auth-only: there's no email
+    to check without it, so this is always False when auth is disabled."""
+    return session.get("user_email", "") == DEMO_USER_EMAIL
 
 
 def init_auth(app):
