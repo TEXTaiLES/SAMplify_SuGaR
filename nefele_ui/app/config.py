@@ -18,12 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-# The one pre-built dataset the demo accounts (auth.DEMO_USER_EMAILS) default
-# to instead of starting in setup mode. This is only ever used as a
-# *default* when that visitor has no active-dataset choice of their own yet
-# (see routes._helpers.cfg) — they can still start a fresh dataset normally.
-DEMO_DATASET_NAME = "u2a6f4bf6_dress_demo"
-
 _NAMESPACED_NAME_RE = re.compile(r"^u[0-9a-f]{8}_(.+)$")
 
 

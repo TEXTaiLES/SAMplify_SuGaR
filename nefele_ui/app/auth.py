@@ -99,11 +99,17 @@ def _cached_access_token() -> str | None:
     return tok
 
 
-# Directus accounts that should default to the shared demo dataset instead of
-# starting in setup mode — see is_demo_user() / config.DEMO_DATASET_NAME.
-DEMO_USER_EMAILS = {
-    "mednight.athenarc@sample.com",
-    "mednight.certh@sample.com",
+# Directus accounts that default to a pre-built demo dataset instead of
+# starting in setup mode. Each gets its OWN dataset_name — even though they
+# share the same underlying HESTIA scan (dress_test_hestia) and are free to
+# reuse its reconstruction — so that two demo accounts using the Picker at
+# the same time never share job/prompts state: that state is keyed entirely
+# by dataset_name (see routes._helpers.cfg / config.py), and giving two
+# different visitors the identical dataset_name would reopen exactly the
+# cross-user collision the rest of this isolation work fixed.
+DEMO_DATASETS = {
+    "mednight.athenarc@sample.com": "u2a6f4bf6_dress_demo",
+    "mednight.certh@sample.com": "uffb726bf_dress_demo",
 }
 
 
@@ -151,11 +157,11 @@ def current_user_id() -> str:
     return uid
 
 
-def is_demo_user() -> bool:
-    """True for the one account that should default to the shared demo
-    dataset rather than starting in setup mode. Auth-only: there's no email
-    to check without it, so this is always False when auth is disabled."""
-    return session.get("user_email", "") in DEMO_USER_EMAILS
+def demo_dataset_for_current_user() -> str:
+    """The demo dataset this visitor should default to, or '' if they're not
+    one of the demo accounts. Auth-only: there's no email to check without
+    it, so this is always '' when auth is disabled."""
+    return DEMO_DATASETS.get(session.get("user_email", ""), "")
 
 
 def init_auth(app):
