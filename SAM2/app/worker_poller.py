@@ -136,8 +136,8 @@ SUGAR_RESULTS_ROOT = Path(os.environ.get("SUGAR_RESULTS_ROOT", _REPO / "SUGAR" /
 # reconstruction for the scan_id must already exist in HESTIA — nefele_ui's
 # /results page fetches it independently via scan_id, so the demo job never
 # needs to touch the reconstruction record itself.
-DEMO_SCAN_IDS = {
-    s.strip() for s in os.environ.get("DEMO_SCAN_IDS", "u2a6f4bf6_dress_demo").split(",")
+DEMO_DATASET_NAMES = {
+    s.strip() for s in os.environ.get("DEMO_DATASET_NAMES", "u2a6f4bf6_dress_demo").split(",")
     if s.strip()
 }
 DEMO_FIXTURES_DIR = Path(os.environ.get("DEMO_FIXTURES_DIR", str(REPO_ROOT / "app" / "demo_fixtures")))
@@ -308,16 +308,16 @@ def render_preview(job: dict, input_dir: Path, indexed_dir: Path) -> List[Path]:
     return previews
 
 
-def demo_preview_files(scan_id: str) -> List[Path]:
-    """Canned stand-in for render_preview() on a DEMO_SCAN_IDS scan: a fixed
-    set of pre-fetched preview images checked into DEMO_FIXTURES_DIR/<scan_id>/,
+def demo_preview_files(dataset: str) -> List[Path]:
+    """Canned stand-in for render_preview() on a DEMO_DATASET_NAMES dataset: a fixed
+    set of pre-fetched preview images checked into DEMO_FIXTURES_DIR/<dataset>/,
     uploaded via the same post_preview() call a real preview uses."""
-    d = DEMO_FIXTURES_DIR / scan_id
+    d = DEMO_FIXTURES_DIR / dataset
     files: List[Path] = []
     for ext in ("*.png", "*.jpg", "*.jpeg"):
         files.extend(sorted(d.glob(ext)))
     if not files:
-        raise RuntimeError(f"no canned preview fixtures for demo scan_id={scan_id!r} in {d}")
+        raise RuntimeError(f"no canned preview fixtures for demo dataset={dataset!r} in {d}")
     return files
 
 
@@ -563,8 +563,13 @@ def handle_job(job: dict) -> None:
     input_dir = IN_MNT / dataset
     indexed_dir = OUT / f"{dataset}{INDEX_SUFFIX}"
     indexed_dir.mkdir(parents=True, exist_ok=True)
+    # Scoped on dataset_name, NOT scan_id: scan_id is a shared/reused source-
+    # images identifier (e.g. "dress_test_hestia" backs 5+ different real
+    # datasets, including production ones), so matching on it would fast-path
+    # real users' jobs too. dataset_name is the per-job working-dir name and
+    # is what's actually unique to the demo account's flow.
     scan_id = (job.get("scan_id") or "").strip()
-    is_demo = scan_id in DEMO_SCAN_IDS
+    is_demo = dataset in DEMO_DATASET_NAMES
     log.info("claimed job %s (dataset=%s scan=%s)%s", job_id, dataset, job.get("scan_id"),
               " [DEMO]" if is_demo else "")
 
@@ -576,7 +581,7 @@ def handle_job(job: dict) -> None:
             # server sets status=preview_ready) is unchanged.
             post_status(job_id, stage="preview", stage_index=0,
                         message="Generating previews", status=S_PREVIEWING)
-            previews = demo_preview_files(scan_id)
+            previews = demo_preview_files(dataset)
             post_preview(job_id, previews)
             log.info("job %s: [DEMO] uploaded %d canned preview images", job_id, len(previews))
         else:
@@ -601,7 +606,7 @@ def handle_job(job: dict) -> None:
             if decision == "redo":
                 job["points_json"] = instr.get("points_json", job["points_json"])
                 if is_demo:
-                    post_preview(job_id, demo_preview_files(scan_id))
+                    post_preview(job_id, demo_preview_files(dataset))
                     log.info("job %s: [DEMO] redo — re-uploaded canned preview", job_id)
                 else:
                     log.info("job %s: redo — re-rendering preview", job_id)
