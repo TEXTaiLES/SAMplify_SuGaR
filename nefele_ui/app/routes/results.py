@@ -25,7 +25,14 @@ from ..services.pipeline import PipelineStatus, read_status, status_from_job
 from ..services.results import (
     friendly_name, list_outputs, list_pgsr_outputs, read_model, read_patched,
 )
-from ..services.vm_comms import VmCommsError, cancel_job, get_job
+from ..services.vm_comms import (
+    STATUS_CANCELLED,
+    STATUS_DONE,
+    STATUS_ERROR,
+    VmCommsError,
+    cancel_job,
+    get_job,
+)
 from ._helpers import cfg, json_err, json_ok
 
 bp = Blueprint("results", __name__)
@@ -154,19 +161,30 @@ def files_json():
         except Exception as e:
             return json_err(f"HESTIA error: {e}", http=502)
 
-        # Guard against showing a stale reconstruction from a previous run:
-        # if there is an active job, only accept a reconstruction that was
-        # uploaded AFTER the job was created. ISO-8601 strings sort correctly
-        # as plain strings, so a simple comparison is safe.
+        # Guard against showing a stale reconstruction from a previous run
+        # *while a new one is still actually in flight*: if there's an active
+        # job that hasn't reached a terminal status yet, only accept a
+        # reconstruction uploaded AFTER that job started. ISO-8601 strings
+        # sort correctly as plain strings, so a simple comparison is safe.
+        #
+        # Once the job reaches done/error/cancelled, this check is skipped
+        # entirely — a terminal job is asserting "whatever reconstruction
+        # exists now for this scan_id is the answer", even if that record
+        # predates the job itself. This matters for scan_ids that intentionally
+        # reuse an existing reconstruction instead of always producing a new
+        # one (e.g. a demo dataset's worker short-circuiting real processing);
+        # without this, a legitimately-finished job could have its own
+        # correct result hidden purely because of a timestamp technicality.
         if rec:
             job_id = read_job_id(c.indexed_dir)
             if job_id:
                 try:
                     job = get_job(job_id)
-                    job_created_at = job.raw.get("created_at", "")
-                    rec_ts = rec.get("timestamp", "")
-                    if rec_ts and job_created_at and rec_ts < job_created_at:
-                        rec = None  # reconstruction pre-dates current job
+                    if job.status not in (STATUS_DONE, STATUS_ERROR, STATUS_CANCELLED):
+                        job_created_at = job.raw.get("created_at", "")
+                        rec_ts = rec.get("timestamp", "")
+                        if rec_ts and job_created_at and rec_ts < job_created_at:
+                            rec = None  # reconstruction pre-dates current job
                 except VmCommsError:
                     pass  # can't verify — show whatever HESTIA has
 
