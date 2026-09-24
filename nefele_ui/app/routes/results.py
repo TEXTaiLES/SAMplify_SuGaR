@@ -19,9 +19,9 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, abort, redirect, render_template, send_file, url_for
 
-from ..auth import DEMO_DATASET_NAMES
+from ..auth import DEMO_DATASET_NAMES, DEMO_RECONSTRUCTION_IDS
 from ..services.dataset_meta import read_job_id, read_scan_id
-from ..services.hestia import fetch_file, get_reconstruction
+from ..services.hestia import fetch_file, get_reconstruction, get_reconstruction_by_id
 from ..services.pipeline import PipelineStatus, read_status, status_from_job
 from ..services.results import (
     friendly_name, list_outputs, list_pgsr_outputs, read_model, read_patched,
@@ -46,7 +46,14 @@ def pipeline_status():
     if not c.is_configured:
         return json_err("No dataset configured", http=400)
 
-    if c.uses_vm_comms:
+    if c.dataset_name in DEMO_DATASET_NAMES:
+        # Demo datasets never create a real job (see picker._save_vm_comms),
+        # so indexed_dir/.vm_comms_job can hold a stale pointer left over
+        # from testing before that bypass existed — reading it would report
+        # on some unrelated job's real, possibly-now-cancelled status. Report
+        # a fixed "done" instead; the actual readiness signal is /results/files.
+        status = PipelineStatus(dataset=c.dataset_name, status="done", message="")
+    elif c.uses_vm_comms:
         job_id = read_job_id(c.indexed_dir)
         if not job_id:
             status = PipelineStatus(dataset=c.dataset_name)
@@ -134,9 +141,23 @@ def _reconstruction_files(record: dict) -> list[dict]:
 
 
 def _fetch_reconstruction(c):
-    """Fetch the reconstruction record for the active dataset's scan (may raise)."""
+    """Fetch the reconstruction record for the active dataset's scan (may raise).
+
+    Demo datasets are pinned to one specific reconstruction object_id
+    (DEMO_RECONSTRUCTION_IDS) instead of "whatever's newest for this
+    scan_id" — their scan_id is intentionally shared with an unrelated
+    production dataset, so newest-by-timestamp isn't a safe way to identify
+    the demo's own result. If that pinned object ever isn't found (e.g. it
+    was deleted upstream), this returns None rather than falling back to
+    some other dataset's reconstruction.
+    """
     scan_id = read_scan_id(c.input_dir)
-    return get_reconstruction(scan_id) if scan_id else None
+    if not scan_id:
+        return None
+    pinned = DEMO_RECONSTRUCTION_IDS.get(c.dataset_name)
+    if pinned:
+        return get_reconstruction_by_id(scan_id, pinned)
+    return get_reconstruction(scan_id)
 
 
 # --- shared_fs (mounted SuGaR / PGSR output dirs) --------------------------

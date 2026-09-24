@@ -119,6 +119,21 @@ DEMO_DATASETS = {
 # job for the same dataset).
 DEMO_DATASET_NAMES = set(DEMO_DATASETS.values())
 
+# Pins each demo dataset to ONE specific, known-correct reconstruction
+# object_id, rather than trusting "whatever's newest for this scan_id".
+# dress_test_hestia is intentionally reused by both demo datasets AND an
+# unrelated real production dataset (scan_dress_test_fast_pgsr) — confirmed
+# live: 5 reconstruction rows share this scan_id, only one of them
+# (b3652139-...) is the actual demo mesh (u2a6f4bf6_dress_demo_tsdf_fusion_
+# post.obj), the other 4 are the production dataset's own runs. "Newest"
+# happens to be correct right now only because the production dataset
+# hasn't been reprocessed more recently than the demo's own run — that's not
+# safe to rely on going forward. See services.hestia.get_reconstruction_by_id.
+DEMO_RECONSTRUCTION_IDS = {
+    "u2a6f4bf6_dress_demo": "b3652139-bf07-48dc-9674-fa90cd0c91b0",
+    "uffb726bf_dress_demo": "b3652139-bf07-48dc-9674-fa90cd0c91b0",
+}
+
 # Canned SAM2 preview image URLs the Picker returns for a demo dataset,
 # regardless of what points a demo account actually clicks. There is no live
 # fast-path on the worker — a real vm_comms job would still take real

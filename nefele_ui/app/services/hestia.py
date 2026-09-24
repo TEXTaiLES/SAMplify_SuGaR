@@ -240,6 +240,30 @@ def get_reconstruction(scan_id: str) -> Optional[dict]:
     return rows[0] if rows else None
 
 
+def get_reconstruction_by_id(scan_id: str, object_id: str) -> Optional[dict]:
+    """Like :func:`get_reconstruction`, but returns the specific row matching
+    ``object_id`` instead of assuming the newest one is correct.
+
+    Needed when a scan_id is intentionally reused by multiple, independently
+    processed local datasets (e.g. a demo dataset reusing a real HESTIA scan
+    that an unrelated production dataset also happens to reference) —
+    "newest for this scan_id" is then no longer a safe way to identify a
+    *specific* dataset's own result, since anyone re-processing the other
+    dataset would upload a newer row for the same scan_id.
+    """
+    r = requests.get(
+        RECONSTRUCTIONS_EP,
+        headers=_headers(),
+        params={"scan_id": scan_id, "per_page": 50},
+        timeout=20,
+    )
+    r.raise_for_status()
+    for row in r.json():
+        if row.get("object_id") == object_id:
+            return row
+    return None
+
+
 def fetch_file(public_url: str) -> bytes:
     """Download a HESTIA/MinIO file (Bearer-authed, streamed) and return its bytes."""
     r = requests.get(_download_url(public_url), headers=_headers(), stream=True, timeout=60)
