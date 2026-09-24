@@ -14,6 +14,15 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 
+/* Elements below set an explicit `display` (flex/inline-block/...), which
+   overrides the browser's default `[hidden] { display: none }` UA rule —
+   author styles always win over the UA stylesheet regardless of specificity.
+   Without this, JS toggling `.hidden = true` on e.g. a `.card` has no visual
+   effect at all: the element keeps rendering. This was the real cause of
+   "Pipeline is still running" staying visible next to the finished-files
+   card on /results — the JS state was correct, the CSS just never hid it. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   color: var(--ink);
