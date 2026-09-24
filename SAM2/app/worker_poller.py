@@ -131,16 +131,28 @@ FASTPGSR_RESULTS_ROOT = Path(os.environ.get("FASTPGSR_RESULTS_ROOT", _REPO / "FA
 SUGAR_RESULTS_ROOT = Path(os.environ.get("SUGAR_RESULTS_ROOT", _REPO / "SUGAR" / "SuGaR" / "outputs"))
 
 # Demo scan_ids: skip real SAM2/COLMAP/reconstruction for these and return
-# canned previews + an instant "done" instead. Scoped tightly by exact
-# scan_id match so this never fires for a real user's dataset. A completed
+# canned previews + an instant "done" instead. nefele_ui mints a FRESH
+# dataset_name per Picker session for the demo account (observed:
+# "u2a6f4bf6_dress_demo", then "uffb726bf_dress_demo" — random hex prefix,
+# constant suffix) — so this must match by suffix, not exact value, or every
+# new session silently falls through to the real, slow pipeline. A completed
 # reconstruction for the scan_id must already exist in HESTIA — nefele_ui's
 # /results page fetches it independently via scan_id, so the demo job never
 # needs to touch the reconstruction record itself.
-DEMO_DATASET_NAMES = {
-    s.strip() for s in os.environ.get("DEMO_DATASET_NAMES", "u2a6f4bf6_dress_demo").split(",")
+DEMO_DATASET_SUFFIXES = tuple(
+    s.strip() for s in os.environ.get("DEMO_DATASET_SUFFIXES", "_dress_demo").split(",")
     if s.strip()
-}
+)
 DEMO_FIXTURES_DIR = Path(os.environ.get("DEMO_FIXTURES_DIR", str(REPO_ROOT / "app" / "demo_fixtures")))
+
+
+def demo_fixture_key(dataset: str) -> str:
+    """Map a demo dataset_name to its fixture folder name by stripping the
+    random per-session prefix, e.g. 'uffb726bf_dress_demo' -> 'dress_demo'."""
+    for suf in DEMO_DATASET_SUFFIXES:
+        if dataset.endswith(suf):
+            return suf.lstrip("_")
+    return dataset
 
 # --- mesh patching helpers (mirror of services/results.py) -------------------
 # These ensure that when we rename SuGaR's long filenames to {dataset}.obj/mtl/png
@@ -569,19 +581,19 @@ def handle_job(job: dict) -> None:
     # real users' jobs too. dataset_name is the per-job working-dir name and
     # is what's actually unique to the demo account's flow.
     scan_id = (job.get("scan_id") or "").strip()
-    is_demo = dataset in DEMO_DATASET_NAMES
+    is_demo = dataset.endswith(DEMO_DATASET_SUFFIXES)
     log.info("claimed job %s (dataset=%s scan=%s)%s", job_id, dataset, job.get("scan_id"),
               " [DEMO]" if is_demo else "")
 
     try:
         if is_demo:
-            # Demo scan_id: skip real SAM2 inference, upload a fixed set of
+            # Demo dataset: skip real SAM2 inference, upload a fixed set of
             # already-rendered preview images instead. Same post_preview()
             # call a real preview uses, so the contract (multipart upload,
             # server sets status=preview_ready) is unchanged.
             post_status(job_id, stage="preview", stage_index=0,
                         message="Generating previews", status=S_PREVIEWING)
-            previews = demo_preview_files(dataset)
+            previews = demo_preview_files(demo_fixture_key(dataset))
             post_preview(job_id, previews)
             log.info("job %s: [DEMO] uploaded %d canned preview images", job_id, len(previews))
         else:
@@ -606,7 +618,7 @@ def handle_job(job: dict) -> None:
             if decision == "redo":
                 job["points_json"] = instr.get("points_json", job["points_json"])
                 if is_demo:
-                    post_preview(job_id, demo_preview_files(dataset))
+                    post_preview(job_id, demo_preview_files(demo_fixture_key(dataset)))
                     log.info("job %s: [DEMO] redo — re-uploaded canned preview", job_id)
                 else:
                     log.info("job %s: redo — re-rendering preview", job_id)
