@@ -5,6 +5,21 @@ Gaussian-splatting backend (SuGaR / PGSR / Fast-PGSR) against a more-trusted
 reference — another backend, or a COLMAP-dense photogrammetry mesh — and get
 quantitative metrics plus a visual error heatmap.
 
+## Example
+
+Every run writes a self-contained `report.html` — metrics, an error
+histogram, and a rotatable 3D heatmap (dark blue = accurate, red = far from
+the reference), all in one file:
+
+<p align="center">
+  <img src="docs/report-header.png" width="720" alt="report.html header, metrics table and error histogram"><br>
+  <img src="docs/report-heatmap.png" width="720" alt="interactive 3D error heatmap">
+</p>
+
+(dress reconstruction, PGSR vs. SuGaR — the red patches at the hem are real
+floater geometry, not a rendering artefact; see [Compare two
+models](#compare-two-models) below to reproduce this.)
+
 ## Compare two models
 
 1. **Pick the reference.** Whichever mesh you trust more (e.g. the classic
