@@ -61,7 +61,7 @@ def page():
         return redirect(url_for("welcome.welcome"))
     return render_template(
         "results.html",
-        ds=c.dataset_name,
+        ds=c.display_name,
         model=read_model(c.in_mnt, c.dataset_name),
         uses_vm_comms=c.uses_vm_comms,
     )
@@ -134,7 +134,11 @@ def _fetch_reconstruction(c):
 # --- shared_fs (mounted SuGaR / PGSR output dirs) --------------------------
 def _results_root(c):
     model = read_model(c.in_mnt, c.dataset_name)
-    return (c.pgsr_results_root, model) if model == "pgsr" else (c.sugar_results_root, model)
+    if model == "pgsr":
+        return c.pgsr_results_root, model
+    if model == "fastpgsr":
+        return c.fastpgsr_results_root, model
+    return c.sugar_results_root, model
 
 
 @bp.get("/results/files")

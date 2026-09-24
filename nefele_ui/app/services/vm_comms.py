@@ -131,7 +131,7 @@ def create_job(scan_id: str, dataset_name: str, model: str, points_json: dict) -
     body = {
         "scan_id": scan_id,
         "dataset_name": dataset_name,
-        "model": model if model in ("sugar", "pgsr") else "sugar",
+        "model": model if model in ("sugar", "pgsr", "fastpgsr") else "sugar",
         "points_json": points_json,
     }
     log.info("vm_comms: create job dataset=%s scan=%s", dataset_name, scan_id)
@@ -145,13 +145,20 @@ def get_job(job_id: str) -> Job:
     return Job.from_dict(_request("GET", f"{VM_COMMS_EP}/{job_id}"))
 
 
-def find_pending_for_scan(scan_id: str) -> Optional[Job]:
-    """Look for an open ``preview_ready`` job tied to this scan_id.
+def find_pending_for_scan(scan_id: str, dataset_name: str) -> Optional[Job]:
+    """Look for an open ``preview_ready`` job tied to this scan_id AND dataset.
 
     Used by the picker's /save handler to avoid creating a second job while a
     previous preview is still waiting for the user's Confirm/Redo decision —
     the worker_poller can only process one job at a time and would otherwise
     queue the new one indefinitely (single-host poller).
+
+    ``scan_id`` alone is not enough to identify "my" job: it names the
+    underlying HESTIA scan, which is shared institutional data, so two
+    different users' datasets can point at the same scan_id. The HESTIA list
+    endpoint only filters by scan_id/status server-side, so the dataset_name
+    match is done client-side here to avoid resuming a *different* user's
+    pending preview.
 
     Returns the newest matching job, or ``None`` if nothing is pending.
     """
@@ -167,6 +174,7 @@ def find_pending_for_scan(scan_id: str) -> Optional[Job]:
         return None
     if isinstance(rows, dict):
         rows = rows.get("data") or []
+    rows = [r for r in (rows or []) if r.get("dataset_name") == dataset_name]
     if not rows:
         return None
     rows.sort(key=lambda j: j.get("created_at", ""), reverse=True)

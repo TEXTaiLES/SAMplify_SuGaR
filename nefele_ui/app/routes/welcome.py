@@ -29,7 +29,7 @@ def welcome():
     return render_template(
         "welcome.html",
         is_configured=c.is_configured,
-        dataset_name=c.dataset_name,
+        dataset_name=c.display_name,
         has_prompts=c.prompts_json.is_file() if c.is_configured else False,
         has_frames=bool(frames()),
         model=model,
@@ -38,15 +38,15 @@ def welcome():
 
 @bp.post("/welcome/model")
 def set_model():
-    """Update the active dataset's .model file (sugar | pgsr)."""
+    """Update the active dataset's .model file (sugar | pgsr | fastpgsr)."""
     c = cfg()
     if not c.is_configured:
         return json_err("No active dataset.", http=400)
 
     data = request.get_json(silent=True) or {}
     model = (data.get("model") or "").strip()
-    if model not in ("sugar", "pgsr"):
-        return json_err("model must be 'sugar' or 'pgsr'.")
+    if model not in ("sugar", "pgsr", "fastpgsr"):
+        return json_err("model must be 'sugar', 'pgsr', or 'fastpgsr'.")
 
     write_model(c.in_mnt / c.dataset_name, model)
     return json_ok(model=model)

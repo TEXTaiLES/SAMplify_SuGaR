@@ -7,6 +7,7 @@ WebP, BMP, TIFF, etc. without thinking about format.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from pathlib import Path
@@ -28,6 +29,36 @@ _DATASET_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 def sanitize_dataset_name(raw: str) -> str:
     name = _DATASET_NAME_RE.sub("_", raw.strip())
     return name.lstrip(".")
+
+
+def _user_tag(user_id: str) -> str:
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:8]
+
+
+def owns_dataset(user_id: str, name: str) -> bool:
+    """True if ``name`` was namespaced for ``user_id`` by ``user_scoped_name``.
+
+    Client-supplied dataset names (e.g. from the video-upload confirm/cancel
+    steps) must be checked against this before touching files on disk or
+    HESTIA/vm_comms state — otherwise one user could guess/reuse another
+    user's dataset name and prune or cancel their in-progress upload.
+    """
+    return name.startswith(f"u{_user_tag(user_id)}_")
+
+
+def user_scoped_name(user_id: str, raw: str) -> str:
+    """Prefix a sanitized dataset name with a short, stable hash of the
+    owner's identity.
+
+    Dataset names double as the HESTIA ``scan_id`` and as the key for the
+    (dataset-name-keyed) SuGaR/PGSR output mounts, none of which know about
+    "users" at all. Namespacing the name itself — rather than the storage
+    layout — is what keeps two different people from colliding on disk, in
+    HESTIA, or in each other's vm_comms jobs, without touching any of that
+    external, dataset-name-keyed machinery.
+    """
+    name = sanitize_dataset_name(raw)
+    return f"u{_user_tag(user_id)}_{name}"
 
 
 def _to_rgb(img: Image.Image) -> Image.Image:
@@ -96,13 +127,16 @@ def save_uploaded_images(
     return saved, failed
 
 
-def write_active_dataset(in_mnt: Path, name: str) -> None:
-    """Record the chosen dataset name so it survives restarts and is visible to the shell."""
-    (in_mnt / ".active_dataset").write_text(name + "\n", encoding="utf-8")
+def write_user_active_dataset(in_mnt: Path, user_id: str, name: str) -> None:
+    """Record this user's chosen dataset so it survives restarts and other
+    browsers/devices for the same account — without ever being visible to,
+    or overwritten by, a different user's choice."""
+    (in_mnt / f".active_dataset.{user_id}").write_text(name + "\n", encoding="utf-8")
 
 
 def assert_within_root(target: Path, root: Path) -> None:
-    """Raise ValueError if *target* resolves outside *root* (catches symlink traversal too)."""
+    """Raise ValueError if ``target`` resolves outside ``root`` (catches
+    symlink traversal too, unlike a plain string prefix check)."""
     try:
         target.resolve().relative_to(root.resolve())
     except ValueError:

@@ -2,26 +2,48 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
-from flask import g, jsonify
+from flask import current_app, jsonify, session
 
-from ..auth import get_current_user_slug
-from ..config import Config, load_config
+from ..auth import current_user_id
+from ..config import Config, read_user_active_dataset
 from ..services.frames import resolve_frames
 
 
 def cfg() -> Config:
-    if not hasattr(g, "cfg"):
-        g.cfg = load_config(get_current_user_slug())
-    return g.cfg
+    """Build this request's effective Config: the process-wide base settings
+    (mounts, worker URL, ...) plus the current visitor's own dataset choice.
+
+    Resolution order for the dataset name:
+      1. ``DATASET_NAME`` env var — operator pin for single-tenant deployments.
+      2. this browser session's own choice (set by ``app.activate_dataset``).
+      3. this user's last choice, persisted per-user on disk (so it survives
+         across their other browsers/devices/logins).
+      4. unset -> setup mode.
+
+    Every visitor gets their own dataset_name this way — nothing here is
+    cached on the app or read from a global file, so one visitor's choice can
+    never leak into another's.
+    """
+    base: Config = current_app.config["BASE_CONFIG"]
+    if base.dataset_name:
+        return base
+
+    uid = current_user_id()
+    name = session.get("dataset_name", "") or read_user_active_dataset(base.in_mnt, uid) or ""
+    c = dataclasses.replace(base, user_id=uid, dataset_name=name)
+    if c.is_configured:
+        c.ensure_dirs()
+    return c
 
 
 def frames() -> list[str]:
-    if not hasattr(g, "frames"):
-        c = cfg()
-        g.frames = resolve_frames(c.input_dir, c.index_suffix) if c.is_configured else []
-    return g.frames
+    c = cfg()
+    if not c.is_configured:
+        return []
+    return resolve_frames(c.input_dir, c.index_suffix)
 
 
 def json_ok(**payload: Any):

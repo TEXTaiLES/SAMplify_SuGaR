@@ -65,7 +65,7 @@ def _save_vm_comms(c, frame_path: Path, pts, labs, frame_idx: int):
     scan_id = read_scan_id(c.input_dir)
     model = read_model(c.in_mnt, c.dataset_name)
 
-    pending = vm_comms.find_pending_for_scan(scan_id) if scan_id else None
+    pending = vm_comms.find_pending_for_scan(scan_id, c.dataset_name) if scan_id else None
     if pending and pending.preview:
         write_job_id(c.indexed_dir, pending.job_id)
         preview_urls = [

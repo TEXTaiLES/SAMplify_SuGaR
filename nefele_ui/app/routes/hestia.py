@@ -5,18 +5,28 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from flask import Blueprint, current_app, redirect, render_template, request, url_for
+from flask import Blueprint, render_template, request
 
+from .. import activate_dataset
+from ..auth import current_user_id
 from ..services.dataset_meta import write_scan_meta
 from ..services.hestia import download_scan, list_scans, upload_reconstruction
 from ..services.pipeline import request_kill
-from ..services.uploads import sanitize_dataset_name, write_active_dataset
+from ..services.uploads import (
+    owns_dataset,
+    sanitize_dataset_name,
+    user_scoped_name,
+    write_user_active_dataset,
+)
 from ._helpers import cfg, json_err, json_ok
 
 bp = Blueprint("hestia", __name__)
 
-# Track active downloads so the UI can poll progress.
-# { scan_id: {"status": "downloading"|"done"|"error", "downloaded": N, "error": str} }
+# Track active downloads so the UI can poll progress. Keyed by the (already
+# per-user-namespaced) dataset name rather than scan_id — HESTIA scan_id is
+# shared institutional data, so two different users loading the *same* scan
+# concurrently must still get their own independent progress entry.
+# { dataset_name: {"status": "downloading"|"done"|"error", "downloaded": N, "error": str} }
 _downloads: dict = {}
 _downloads_lock = threading.Lock()
 
@@ -48,44 +58,50 @@ def scans_json():
 
 @bp.post("/hestia/load")
 def load_scan():
-    """Start downloading a scan in the background; return immediately."""
+    """Start downloading a scan in the background; return immediately.
+
+    ``scan_id`` names a HESTIA scan, which is shared institutional data — any
+    user may load it. The local ``dataset_name`` this becomes is namespaced
+    per user so that two people loading the same scan never share a download,
+    a local dataset folder, or (later) a vm_comms job/preview.
+    """
     data = request.get_json(silent=True) or request.form
     scan_id = (data.get("scan_id") or "").strip()
     if not scan_id:
         return json_err("scan_id required", http=400)
 
     model = (data.get("model") or "sugar").strip()
-    if model not in ("sugar", "pgsr"):
+    if model not in ("sugar", "pgsr", "fastpgsr"):
         model = "sugar"
 
+    uid = current_user_id()
+    # Use caller-supplied name if valid, else fall back to auto-name.
+    custom_name = (data.get("dataset_name") or "").strip()
+    raw_name = custom_name if sanitize_dataset_name(custom_name) else f"scan_{scan_id[:8]}"
+    dataset_name = user_scoped_name(uid, raw_name)
+
     with _downloads_lock:
-        if scan_id in _downloads and _downloads[scan_id]["status"] == "downloading":
+        if _downloads.get(dataset_name, {}).get("status") == "downloading":
             return json_ok(status="downloading", message="Already in progress")
-        _downloads[scan_id] = {"status": "downloading", "downloaded": 0, "error": None}
+        _downloads[dataset_name] = {"status": "downloading", "downloaded": 0, "error": None}
 
     c = cfg()
     request_kill(c.in_mnt)
-    # Use caller-supplied name if valid, else fall back to auto-name
-    custom_name = sanitize_dataset_name((data.get("dataset_name") or "").strip())
-    dataset_name = custom_name if custom_name else f"scan_{scan_id[:8]}"
     dest = c.in_mnt / dataset_name
-
-    # Capture the real app object now, inside the request context,
-    # before the thread starts (current_app proxy breaks in threads).
-    app = current_app._get_current_object()
+    in_mnt = c.in_mnt
 
     def _run():
         count = 0
 
         def _progress(n):
             with _downloads_lock:
-                _downloads[scan_id]["downloaded"] = n
+                _downloads[dataset_name]["downloaded"] = n
 
         try:
             count = download_scan(scan_id, dest, on_progress=_progress)
         except Exception as e:
             with _downloads_lock:
-                _downloads[scan_id] = {"status": "error", "downloaded": count, "error": str(e)}
+                _downloads[dataset_name] = {"status": "error", "downloaded": count, "error": str(e)}
             return
 
         # Persist scan id + model choice alongside the dataset so the picker
@@ -95,15 +111,17 @@ def load_scan():
         except Exception:
             pass
 
-        # Download succeeded — mark done regardless of what rebind does
-        write_active_dataset(c.in_mnt, dataset_name)
-        with _downloads_lock:
-            _downloads[scan_id] = {"status": "done", "downloaded": count, "error": None}
+        # Persist this user's choice on disk. This runs in a background
+        # thread with no request context, so it can't touch Flask's
+        # session — /hestia/load/status finishes the activation (session +
+        # per-user file) once it observes status == "done", back in a real
+        # request context.
         try:
-            from .. import rebind_dataset
-            rebind_dataset(app, dataset_name)
-        except Exception:
-            pass  # rebind is best-effort; .active_dataset file is the durable record
+            write_user_active_dataset(in_mnt, uid, dataset_name)
+        except OSError:
+            pass
+        with _downloads_lock:
+            _downloads[dataset_name] = {"status": "done", "downloaded": count, "error": None}
 
     threading.Thread(target=_run, daemon=True).start()
     return json_ok(status="downloading", dataset=dataset_name, scan_id=scan_id)
@@ -111,13 +129,23 @@ def load_scan():
 
 @bp.get("/hestia/load/status")
 def load_status():
-    """Poll download progress for a given scan_id."""
-    scan_id = request.args.get("scan_id", "").strip()
+    """Poll download progress for a given (per-user) dataset name.
+
+    Runs in a real request context, unlike the background download thread,
+    so this is also where a finished download gets activated for the current
+    visitor's session — session state can't be touched from that thread.
+    """
+    dataset_name = request.args.get("dataset", "").strip()
+    uid = current_user_id()
+    if not dataset_name or not owns_dataset(uid, dataset_name):
+        return json_err("No download found for that dataset", http=404)
     with _downloads_lock:
-        info = _downloads.get(scan_id)
+        info = _downloads.get(dataset_name)
     if not info:
-        return json_err("No download found for that scan_id", http=404)
-    return json_ok(**info, scan_id=scan_id)
+        return json_err("No download found for that dataset", http=404)
+    if info["status"] == "done":
+        activate_dataset(dataset_name)
+    return json_ok(**info, dataset=dataset_name)
 
 
 @bp.post("/hestia/upload")

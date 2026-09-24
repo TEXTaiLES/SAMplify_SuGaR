@@ -29,7 +29,7 @@ def index():
         return redirect(url_for("setup.setup"))
     return render_template(
         "home.html",
-        ds=c.ds_name,
+        ds=c.display_name,
         nframes=len(frames()),
         exists=c.prompts_json.is_file(),
         prompts=str(c.prompts_json),

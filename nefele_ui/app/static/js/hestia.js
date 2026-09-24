@@ -83,7 +83,7 @@
     const timer = setInterval(async () => {
       attempts++;
       try {
-        const r = await fetch(`/hestia/load/status?scan_id=${encodeURIComponent(scanId)}`, { cache: 'no-store' });
+        const r = await fetch(`/hestia/load/status?dataset=${encodeURIComponent(datasetName)}`, { cache: 'no-store' });
         const d = await r.json();
         if (!d.ok) { clearInterval(timer); showError(d.error || 'Status error'); return; }
 

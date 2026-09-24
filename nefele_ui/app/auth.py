@@ -13,7 +13,6 @@ rotates it — one wins, the other gets 401 and bounces to login.
 from __future__ import annotations
 
 import os
-import re
 import time
 from urllib.parse import quote
 
@@ -100,43 +99,46 @@ def _cached_access_token() -> str | None:
     return tok
 
 
-def safe_user_slug(email: str) -> str:
-    local = email.split("@")[0] if "@" in email else email
-    slug = re.sub(r"[^a-z0-9_-]", "-", local.lower())
-    return slug or "guest"
-
-
-def _fetch_user_identity(access_token: str) -> None:
-    """Call /users/me and cache email + slug in the session."""
+def _ensure_user_id(access_token: str) -> None:
+    """Cache the Directus account id in the session so per-user isolation
+    (active dataset, dataset naming) can key off a real identity instead of
+    an anonymous per-browser session. No-op once already cached — the id
+    never changes for a given account."""
+    if session.get("user_id"):
+        return
     try:
         r = requests.get(
             f"{DIRECTUS_URL}/users/me",
             headers={"Authorization": f"Bearer {access_token}"},
+            params={"fields": "id"},
             timeout=8,
         )
         if r.status_code == 200:
-            email = r.json().get("data", {}).get("email") or ""
-            session["user_email"] = email
-            session["user_slug"] = safe_user_slug(email) if email else "guest"
-        else:
-            print("users/me failed:", r.status_code, r.text[:200], flush=True)
+            uid = (r.json().get("data") or {}).get("id")
+            if uid:
+                session["user_id"] = uid
     except Exception as e:
-        print("users/me exception:", e, flush=True)
+        print("users/me fetch failed:", e, flush=True)
 
 
-def get_current_user() -> str | None:
-    """Return the cached email for the current session, fetching if needed."""
-    if "user_email" in session:
-        return session["user_email"]
-    tok = _cached_access_token()
-    if tok:
-        _fetch_user_identity(tok)
-    return session.get("user_email")
+def current_user_id() -> str:
+    """Stable identifier for the current visitor, used to namespace their
+    datasets/state so different users never collide or see each other's data.
 
-
-def get_current_user_slug() -> str:
-    """Return the cached slug for the current session, or 'guest'."""
-    return session.get("user_slug", "guest")
+    With auth enabled this is the Directus account id. Without auth (local /
+    dev deployments) there is no real identity, so fall back to a random id
+    persisted in the session cookie — stable for that browser, isolated from
+    every other browser.
+    """
+    uid = session.get("user_id")
+    if uid:
+        return uid
+    uid = session.get("anon_id")
+    if not uid:
+        import uuid
+        uid = f"anon-{uuid.uuid4().hex[:16]}"
+        session["anon_id"] = uid
+    return uid
 
 
 def init_auth(app):
@@ -152,8 +154,7 @@ def init_auth(app):
         tok = _cached_access_token()
         if tok:
             g.access_token = tok
-            if "user_email" not in session:
-                _fetch_user_identity(tok)
+            _ensure_user_id(tok)
             return None
 
         # Slow path: either first hit, or the cached token expired. We need
@@ -170,11 +171,7 @@ def init_auth(app):
             return redirect_to_login()
 
         _store_tokens(tokens)
-        # After a refresh the access_token is new; re-fetch identity so the
-        # session email/slug are always consistent with the current token.
-        session.pop("user_email", None)
-        session.pop("user_slug", None)
-        _fetch_user_identity(g.access_token)
+        _ensure_user_id(tokens.get("access_token") or "")
         return None
 
     @app.after_request
