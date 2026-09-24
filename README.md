@@ -47,6 +47,32 @@ Written to `results/`:
 
 Pass `--no-html` to skip the report.
 
+### Viewing a report
+
+`report.html` is a normal web page — but if this tool ran on a remote,
+headless machine (no display), you need one extra step to actually see it.
+
+**Option A — download the file, open it locally** (simplest, no networking):
+in VS Code's file Explorer (Remote-SSH), right-click the `report.html` you
+want → **Download...** → save it anywhere on your own machine → double-click
+it to open in your browser.
+
+**Option B — view it live at a `localhost` URL:**
+
+1. On the remote machine, serve the `results/` folder:
+   ```bash
+   python3 -m http.server 8811 --bind 127.0.0.1 -d results
+   ```
+2. On **your own machine** — a fresh terminal, *not* one already SSH'd into
+   the remote box — open a tunnel:
+   ```bash
+   ssh -L 8811:localhost:8811 <user>@<remote-host>
+   ```
+   Leave this running. (If the prompt in this terminal still shows the
+   remote host's name, you're in the wrong terminal — the tunnel command has
+   to run *from* your machine *to* the remote one, not from inside it.)
+3. In your own browser, open **http://localhost:8811/**.
+
 ## Layout
 
 ```
