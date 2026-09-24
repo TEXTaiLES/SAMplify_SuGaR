@@ -9,22 +9,42 @@ import numpy as np
 
 _PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 
+# Palette/type borrowed from the TEXTaiLES portal (Lexend Deca, #265d72).
 _CSS = """
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  body { font-family: -apple-system, system-ui, Segoe UI, sans-serif;
-         margin: 0; padding: 24px; max-width: 1000px; margin-inline: auto; color: #1a1a1a; }
-  header { margin-bottom: 18px; }
-  h1 { font-size: 1.4rem; margin: 0; }
-  h2 { font-size: .95rem; margin: 0 0 10px; }
-  .muted { color: #888; margin: 2px 0 0; }
-  .meta { display: flex; flex-wrap: wrap; gap: 12px 28px; margin-bottom: 20px; }
+  :root {
+    --primary: #265d72; --primary-light: #e8eef1; --text: #1c2b33;
+    --muted: #6b7c85; --border: #e2e8ec; --bg: #f7f9fa;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: 'Lexend Deca', -apple-system, system-ui, sans-serif;
+         margin: 0; background: var(--bg); color: var(--text); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 20px 48px; }
+  header.top { display: flex; align-items: center; gap: 14px; margin-bottom: 24px;
+               border-bottom: 3px solid var(--primary); padding-bottom: 16px; }
+  header.top .badge { width: 42px; height: 42px; border-radius: 10px; background: var(--primary);
+                       display: flex; align-items: center; justify-content: center;
+                       color: #fff; font-weight: 700; font-size: 1.2rem; flex-shrink: 0; }
+  h1 { font-size: 1.5rem; margin: 0; font-weight: 600; letter-spacing: -.01em; }
+  h2 { font-size: .95rem; margin: 0 0 12px; font-weight: 600; color: var(--primary); }
+  .muted { color: var(--muted); margin: 2px 0 0; font-size: .85rem; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px 28px; margin-bottom: 22px; }
   .meta div { display: flex; flex-direction: column; }
-  .meta span { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: #888; }
-  .grid { display: grid; grid-template-columns: 260px 1fr; gap: 16px; margin-bottom: 16px; }
-  .card { border: 1px solid #e6e6e6; border-radius: 10px; padding: 16px; }
+  .meta span { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--muted); font-weight: 600; margin-bottom: 3px; }
+  .meta code { font-family: ui-monospace, Menlo, monospace; font-size: .82rem; color: var(--text);
+               background: var(--primary-light); padding: 2px 7px; border-radius: 5px; }
+  .grid { display: grid; grid-template-columns: 300px 1fr; gap: 18px; margin-bottom: 18px; }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 12px;
+          padding: 18px 20px; box-shadow: 0 1px 3px rgba(38, 93, 114, .06); }
   table { width: 100%; border-collapse: collapse; }
-  td { padding: 7px 4px; border-bottom: 1px solid #f1f1f1; }
-  td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  td { padding: 9px 4px; border-bottom: 1px solid var(--border); font-size: .9rem; }
+  tr:last-child td { border-bottom: none; }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums;
+                  font-weight: 700; color: var(--text); }
   @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
 </style>
 """
@@ -53,11 +73,12 @@ def html_report(result, points, distances, reference, test,
     view.update_layout(scene=dict(aspectmode="data"),
                        margin=dict(l=0, r=0, t=0, b=0), height=560)
 
-    hist = go.Figure(go.Histogram(x=d, nbinsx=60, marker_color="#4c78a8"))
+    hist = go.Figure(go.Histogram(x=d, nbinsx=60, marker_color="#265d72"))
     hist.add_vline(x=result.tolerance, line_dash="dash", line_color="#e45756",
                    annotation_text="tol")
     hist.update_layout(margin=dict(l=48, r=10, t=10, b=40), height=300, bargap=0.02,
-                       xaxis_title="surface distance", yaxis_title="points")
+                       xaxis_title="surface distance", yaxis_title="points",
+                       font=dict(family="Lexend Deca, sans-serif"))
 
     view_div = view.to_html(full_html=False, include_plotlyjs=False)
     hist_div = hist.to_html(full_html=False, include_plotlyjs=False)
@@ -74,8 +95,11 @@ def html_report(result, points, distances, reference, test,
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mesh evaluation</title>
 <script src="{_PLOTLY_CDN}"></script>{_CSS}</head>
-<body>
-<header><h1>Mesh evaluation</h1><p class="muted">{date.today().isoformat()}</p></header>
+<body><div class="wrap">
+<header class="top">
+  <div class="badge">3D</div>
+  <div><h1>Mesh evaluation</h1><p class="muted">{date.today().isoformat()}</p></div>
+</header>
 <section class="meta">
   <div><span>reference</span><code>{reference}</code></div>
   <div><span>test</span><code>{test}</code></div>
@@ -87,7 +111,7 @@ def html_report(result, points, distances, reference, test,
   <div class="card"><h2>Error distribution</h2>{hist_div}</div>
 </section>
 <section class="card"><h2>Error heatmap (drag to rotate)</h2>{view_div}</section>
-</body></html>"""
+</div></body></html>"""
 
     out_path.write_text(html, encoding="utf-8")
     return out_path
