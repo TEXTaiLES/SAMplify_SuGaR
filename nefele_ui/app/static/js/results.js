@@ -4,6 +4,7 @@
   const POLL_INTERVAL_MS = 5000;
 
   const statusPill = document.getElementById('statusPill');
+  const emptyCard = document.getElementById('emptyCard');
   const filesCard = document.getElementById('filesCard');
   const datasetName = filesCard ? filesCard.dataset.dataset || '' : '';
   const filesList = document.getElementById('filesList');
@@ -17,6 +18,15 @@
   // 'cancelled'; keep the button hidden in the meantime so the user can't
   // double-click.
   let cancelRequested = false;
+  // setInterval fires every POLL_INTERVAL_MS regardless of whether the
+  // previous tick()'s fetches have resolved yet. On a slow/hiccuping network
+  // two ticks can be in flight at once, and there's no guarantee the older
+  // (now-stale) one resolves first — it can land *after* a newer, more
+  // correct response and silently overwrite the UI with outdated state (this
+  // is what caused "still running" to keep showing next to the finished
+  // files). Each tick stamps its own id and only applies its result if no
+  // newer tick has started meanwhile.
+  let tickSeq = 0;
 
   function formatBytes(n) {
     if (n < 1024) return `${n} B`;
@@ -76,7 +86,10 @@
 
   if (cancelBtn) cancelBtn.addEventListener('click', onCancelClick);
 
+  // Render exactly one card at a time. Errors collapse both so we don't
+  // leave a contradictory "pipeline still running" + "0 files ready" mix.
   function setState(name) {
+    emptyCard.hidden = name !== 'empty';
     filesCard.hidden = name !== 'files';
   }
 
@@ -141,14 +154,21 @@
   }
 
   async function tick() {
+    const myTick = ++tickSeq;
     try {
       const [filesResp, pipeline] = await Promise.all([
         fetch('/results/files', { cache: 'no-store' }),
         fetchPipelineStatus(),
       ]);
+      const data = await filesResp.json().catch(() => null);
+
+      // Both fetches are done — from here on nothing else is awaited, so a
+      // single staleness check right here is enough to discard this whole
+      // tick if a later one has already started (see tickSeq above).
+      if (myTick !== tickSeq) return;
+
       applyPipelineStatus(pipeline);
 
-      const data = await filesResp.json().catch(() => null);
       if (!filesResp.ok || !data || !data.ok) {
         const msg = (data && data.error) || `HTTP ${filesResp.status}`;
         setStatus(msg, 'error');
@@ -162,18 +182,26 @@
         setState('none');
         if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
       } else if (data.ready) {
+        // Show the files even if the job's own status later flipped to
+        // 'error' (e.g. a successful upload followed by an unrelated
+        // failure) — the deliverable exists, that's what matters here.
         setStatus('Ready', 'ready');
         renderFiles(data.files);
         setState('files');
-        if (pStatus === 'done' && pollHandle) {
+        if ((pStatus === 'done' || pStatus === 'error') && pollHandle) {
           clearInterval(pollHandle); pollHandle = null;
         }
+      } else if (pStatus === 'error') {
+        setStatus('Error', 'error');
+        setState('none');
+        if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
       } else {
         setStatus('Waiting', 'waiting');
-        setState('none');
+        setState('empty');
       }
       updateCancelButton(pStatus);
     } catch (err) {
+      if (myTick !== tickSeq) return;
       setStatus('Network error', 'error');
       setState('none');
     }
