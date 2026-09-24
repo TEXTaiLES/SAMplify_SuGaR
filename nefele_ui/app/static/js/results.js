@@ -188,6 +188,19 @@
         setStatus('Ready', 'ready');
         renderFiles(data.files);
         setState('files');
+        // The files existing is the ground truth that the pipeline actually
+        // completed — show all stages as done even if the job's own status
+        // (e.g. a later unrelated error) would otherwise leave them pending.
+        stageEls.forEach((el) => {
+          el.classList.remove('pending', 'running', 'error');
+          el.classList.add('done');
+        });
+        if (pStatus === 'error') {
+          // A working result already exists — the stale error text (from
+          // whatever the job did *after* producing it) is more alarming
+          // than useful here, so don't show it next to a successful result.
+          stageMessage.textContent = '';
+        }
         if ((pStatus === 'done' || pStatus === 'error') && pollHandle) {
           clearInterval(pollHandle); pollHandle = null;
         }
