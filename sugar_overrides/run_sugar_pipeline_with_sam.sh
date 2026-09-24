@@ -478,7 +478,7 @@ umask 0002
 
 # Search in both /app/output (direct docker run) and ./output (compose with /workspace CWD)
 
-REF=$(find /app/output/refined/ ./output/refined/ -type f -name "*.pt" 2>/dev/null | sort -t/ -k1 | tail -n1 || true)
+REF=$(find /app/output/refined/ ./output/refined/ -type f -name "*.pt" 2>/dev/null | sort -V | tail -n1 || true)
 
 if [ -z "$REF" ]; then
 
