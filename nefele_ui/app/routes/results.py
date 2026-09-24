@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, abort, redirect, render_template, send_file, url_for
 
+from ..auth import DEMO_DATASET_NAMES
 from ..services.dataset_meta import read_job_id, read_scan_id
 from ..services.hestia import fetch_file, get_reconstruction
 from ..services.pipeline import PipelineStatus, read_status, status_from_job
@@ -170,12 +171,18 @@ def files_json():
         # Once the job reaches done/error/cancelled, this check is skipped
         # entirely — a terminal job is asserting "whatever reconstruction
         # exists now for this scan_id is the answer", even if that record
-        # predates the job itself. This matters for scan_ids that intentionally
-        # reuse an existing reconstruction instead of always producing a new
-        # one (e.g. a demo dataset's worker short-circuiting real processing);
-        # without this, a legitimately-finished job could have its own
-        # correct result hidden purely because of a timestamp technicality.
-        if rec:
+        # predates the job itself. Without this, a legitimately-finished job
+        # could have its own correct result hidden purely because of a
+        # timestamp technicality (confirmed live on the demo dataset).
+        #
+        # The demo datasets skip this guard entirely, active job or not:
+        # there is no real fast-path on the worker (a fresh Picker job there
+        # still runs real SAM2/COLMAP/reconstruction, which genuinely takes
+        # time) — the point of these datasets is that their already-ready
+        # result stays visible on /results even while someone is separately
+        # exploring the Picker on a brand new, still-running job for the
+        # same dataset.
+        if rec and c.dataset_name not in DEMO_DATASET_NAMES:
             job_id = read_job_id(c.indexed_dir)
             if job_id:
                 try:

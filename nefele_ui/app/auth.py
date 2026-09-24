@@ -112,6 +112,13 @@ DEMO_DATASETS = {
     "mednight.certh@sample.com": "uffb726bf_dress_demo",
 }
 
+# The dataset_name values from DEMO_DATASETS, as a set for membership checks
+# (e.g. routes.results bypassing its staleness guard for these datasets —
+# a demo account should always see their already-ready result, even while
+# they're separately playing with the Picker on a brand new, still-running
+# job for the same dataset).
+DEMO_DATASET_NAMES = set(DEMO_DATASETS.values())
+
 
 def _ensure_user_id(access_token: str) -> None:
     """Cache the Directus account id + email in the session so per-user
