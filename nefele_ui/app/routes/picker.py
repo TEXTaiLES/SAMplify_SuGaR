@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 
 from flask import Blueprint, render_template, request, send_from_directory
 
+from ..auth import DEMO_CANNED_PREVIEWS, DEMO_DATASET_NAMES
 from ..services import vm_comms
 from ..services.dataset_meta import (
     clear_job_id, read_job_id, read_scan_id, write_job_id,
@@ -60,7 +61,27 @@ def _save_vm_comms(c, frame_path: Path, pts, labs, frame_idx: int):
     Guard against orphan jobs: if a previous job for this scan is already in
     ``preview_ready`` waiting for a Confirm/Redo decision, we surface those
     previews immediately (no need to create a new job).
+
+    Demo datasets never create a real job at all: there's no live fast-path
+    on the worker, so a genuine job would take real SAM2 processing time
+    regardless of dataset. Instead, always return a fixed set of previews
+    from a real, already-completed run of that same dataset — the whole
+    point of a demo account is that it looks and feels instant.
     """
+    canned = DEMO_CANNED_PREVIEWS.get(c.dataset_name)
+    if canned is not None:
+        preview_urls = [f"/hestia-preview?{urlencode({'url': u})}" for u in canned]
+        return json_ok(
+            job_id="demo",
+            previews=preview_urls,
+            pending=False,
+            resumed=True,
+            message=(
+                "Demo dataset — showing an existing example instead of "
+                "running SAM2 on these points."
+            ),
+        )
+
     points_json = build_prompts(frame_path, pts, labs, frame_idx=frame_idx, obj_id=1)
     scan_id = read_scan_id(c.input_dir)
     model = read_model(c.in_mnt, c.dataset_name)
@@ -154,6 +175,10 @@ def save_status():
 @bp.post("/confirm")
 def confirm():
     c = cfg()
+    if c.dataset_name in DEMO_DATASET_NAMES:
+        # No real job was ever created for a demo dataset's preview — see
+        # _save_vm_comms. Nothing to confirm against.
+        return json_ok(msg="confirmed")
     if c.uses_vm_comms:
         job_id = read_job_id(c.indexed_dir)
         if not job_id:
@@ -174,6 +199,8 @@ def confirm():
 @bp.post("/restart")
 def restart():
     c = cfg()
+    if c.dataset_name in DEMO_DATASET_NAMES:
+        return json_ok(msg="restarted")
     if c.uses_vm_comms:
         # Abandon the current job; the next /save creates a fresh one.
         try:

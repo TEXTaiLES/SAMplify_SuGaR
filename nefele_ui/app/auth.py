@@ -119,6 +119,32 @@ DEMO_DATASETS = {
 # job for the same dataset).
 DEMO_DATASET_NAMES = set(DEMO_DATASETS.values())
 
+# Canned SAM2 preview image URLs the Picker returns for a demo dataset,
+# regardless of what points a demo account actually clicks. There is no live
+# fast-path on the worker — a real vm_comms job would still take real
+# processing time — so for demo accounts we skip creating one at all and
+# just reuse the previews from a genuine, already-completed run of that same
+# dataset. These are real HESTIA storage URLs, proxied through
+# /hestia-preview the same way a real job's previews would be.
+DEMO_CANNED_PREVIEWS = {
+    "u2a6f4bf6_dress_demo": [
+        "https://api.textailes.athenarc.gr/storage/nefele/7e17a493-70d1-4dfc-847a-f317c0192f65/000000.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/7e17a493-70d1-4dfc-847a-f317c0192f65/000048.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/7e17a493-70d1-4dfc-847a-f317c0192f65/000104.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/7e17a493-70d1-4dfc-847a-f317c0192f65/000185.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/7e17a493-70d1-4dfc-847a-f317c0192f65/000225.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/7e17a493-70d1-4dfc-847a-f317c0192f65/000399.jpg",
+    ],
+    "uffb726bf_dress_demo": [
+        "https://api.textailes.athenarc.gr/storage/nefele/3481f85b-afc3-4ec0-8eb9-85806505f997/000000.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/3481f85b-afc3-4ec0-8eb9-85806505f997/000108.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/3481f85b-afc3-4ec0-8eb9-85806505f997/000117.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/3481f85b-afc3-4ec0-8eb9-85806505f997/000179.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/3481f85b-afc3-4ec0-8eb9-85806505f997/000330.jpg",
+        "https://api.textailes.athenarc.gr/storage/nefele/3481f85b-afc3-4ec0-8eb9-85806505f997/000428.jpg",
+    ],
+}
+
 
 def _ensure_user_id(access_token: str) -> None:
     """Cache the Directus account id + email in the session so per-user
