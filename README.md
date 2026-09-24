@@ -5,6 +5,35 @@ Gaussian-splatting backend (SuGaR / PGSR / Fast-PGSR) against a more-trusted
 reference — another backend, or a COLMAP-dense photogrammetry mesh — and get
 quantitative metrics plus a visual error heatmap.
 
+## I have two models — how do I compare them?
+
+**1. Do they come from the same COLMAP reconstruction?** (e.g. two backends
+run on the same dataset in the SAMplify_SuGaR pipeline — SuGaR vs. PGSR vs.
+Fast-PGSR.) → use **`mesheval`**, below.
+
+```bash
+python -m mesheval model_a.ply model_b.obj --no-align
+```
+Whichever mesh you consider more trustworthy goes first (it's the
+reference); the other is what gets measured against it.
+
+**2. Different source/scale — e.g. one is a PyBullet simulation, a scan from
+a different tool, or you're not sure they share a frame?** → use
+**[`surface_eval`](surface_eval/README.md)** instead, which adds a
+pre-alignment step:
+
+```bash
+python surface_eval/evaluate_surface.py model_a.ply model_b.obj
+```
+
+**3. Not sure?** Run `mesheval` first (step 1). Check the printed **ICP
+fitness** — close to 1.0 means they aligned cleanly (same frame, output is
+trustworthy); low (e.g. < 0.5) means they don't actually share a frame and
+you should redo it with `surface_eval` instead.
+
+Either way, open the `report.html` it writes (see
+[Viewing a report](#viewing-a-report) below) for the full picture.
+
 ## Install
 
 ```bash
