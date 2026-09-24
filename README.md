@@ -55,6 +55,10 @@ mesheval/
 ├── visualize.py    # error-heatmap point cloud
 ├── report.py       # self-contained HTML report
 └── cli.py          # command-line entry point
+
+surface_eval/        # point-to-surface eval for inputs NOT already in a
+└── evaluate_surface.py  # shared frame (e.g. PyBullet vs. a baseline scan)
+                          # — see surface_eval/README.md
 ```
 
 ## Photogrammetry reference (`make_reference.sh`)
