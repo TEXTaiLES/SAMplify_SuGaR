@@ -20,6 +20,8 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 
+from report import html_report
+
 RANDOM_SEED = 200345
 
 
@@ -151,6 +153,7 @@ def main() -> None:
     ap.add_argument("--y-threshold", type=float, default=None,
                      help="drop points with y below this (e.g. a PyBullet floor plane)")
     ap.add_argument("--gui", action="store_true", help="open an interactive Open3D window")
+    ap.add_argument("--no-html", action="store_true", help="skip the interactive HTML report")
     args = ap.parse_args()
 
     seed_everything(RANDOM_SEED)
@@ -189,6 +192,7 @@ def main() -> None:
         dropped = len(mask_fwd) - mask_fwd.sum()
         print(f"  [y-filter] dropped {dropped}/{len(mask_fwd)} test points below y={args.y_threshold}")
         dist_fwd, dist_bwd = dist_fwd[mask_fwd], dist_bwd[mask_bwd]
+        test_pts = test_pts[mask_fwd]  # keep points/distances aligned for the report
         if len(dist_fwd) == 0 or len(dist_bwd) == 0:
             raise SystemExit("nothing left after y-filtering — try a different --y-threshold")
 
@@ -208,6 +212,13 @@ def main() -> None:
     heatmap_path = args.out_dir / "surface_heatmap.ply"
     o3d.io.write_triangle_mesh(str(heatmap_path), test_mesh)
     print(f"heatmap mesh -> {heatmap_path}")
+
+    if not args.no_html:
+        html_path = html_report(report, test_pts, dist_fwd, args.gt, args.test, t_medium,
+                                 out_path=args.out_dir / "report.html")
+        print(f"report       -> {html_path}" if html_path
+              else "report       -> skipped (pip install plotly)")
+        print("  ^ single file — download it (e.g. VS Code Explorer > Download) and open in any browser")
 
     if args.gui:
         gt_vis = gt_mesh
