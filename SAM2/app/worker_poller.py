@@ -130,6 +130,18 @@ PGSR_RESULTS_ROOT  = Path(os.environ.get("PGSR_RESULTS_ROOT",  _REPO / "PGSR" / 
 FASTPGSR_RESULTS_ROOT = Path(os.environ.get("FASTPGSR_RESULTS_ROOT", _REPO / "FASTPGSR" / "outputs"))
 SUGAR_RESULTS_ROOT = Path(os.environ.get("SUGAR_RESULTS_ROOT", _REPO / "SUGAR" / "SuGaR" / "outputs"))
 
+# Demo scan_ids: skip real SAM2/COLMAP/reconstruction for these and return
+# canned previews + an instant "done" instead. Scoped tightly by exact
+# scan_id match so this never fires for a real user's dataset. A completed
+# reconstruction for the scan_id must already exist in HESTIA — nefele_ui's
+# /results page fetches it independently via scan_id, so the demo job never
+# needs to touch the reconstruction record itself.
+DEMO_SCAN_IDS = {
+    s.strip() for s in os.environ.get("DEMO_SCAN_IDS", "u2a6f4bf6_dress_demo").split(",")
+    if s.strip()
+}
+DEMO_FIXTURES_DIR = Path(os.environ.get("DEMO_FIXTURES_DIR", str(REPO_ROOT / "app" / "demo_fixtures")))
+
 # --- mesh patching helpers (mirror of services/results.py) -------------------
 # These ensure that when we rename SuGaR's long filenames to {dataset}.obj/mtl/png
 # the internal cross-references (mtllib, map_Kd) are updated to match, so the
@@ -154,6 +166,7 @@ def _patch_mtl(data: bytes, dataset: str) -> bytes:
 
 # vm_comms status constants — must match the contract / vm_comms.py.
 S_POINTS_SUBMITTED = "points_submitted"
+S_PREVIEWING = "previewing"
 S_PREVIEW_READY = "preview_ready"
 S_RUNNING = "running"
 S_DONE = "done"
@@ -293,6 +306,19 @@ def render_preview(job: dict, input_dir: Path, indexed_dir: Path) -> List[Path]:
     for ext in ("*.png", "*.jpg", "*.jpeg"):
         previews.extend(sorted(preview_dir.rglob(ext)))
     return previews
+
+
+def demo_preview_files(scan_id: str) -> List[Path]:
+    """Canned stand-in for render_preview() on a DEMO_SCAN_IDS scan: a fixed
+    set of pre-fetched preview images checked into DEMO_FIXTURES_DIR/<scan_id>/,
+    uploaded via the same post_preview() call a real preview uses."""
+    d = DEMO_FIXTURES_DIR / scan_id
+    files: List[Path] = []
+    for ext in ("*.png", "*.jpg", "*.jpeg"):
+        files.extend(sorted(d.glob(ext)))
+    if not files:
+        raise RuntimeError(f"no canned preview fixtures for demo scan_id={scan_id!r} in {d}")
+    return files
 
 
 # --- full reconstruction pipeline -----------------------------------------
@@ -537,18 +563,32 @@ def handle_job(job: dict) -> None:
     input_dir = IN_MNT / dataset
     indexed_dir = OUT / f"{dataset}{INDEX_SUFFIX}"
     indexed_dir.mkdir(parents=True, exist_ok=True)
-    log.info("claimed job %s (dataset=%s scan=%s)", job_id, dataset, job.get("scan_id"))
+    scan_id = (job.get("scan_id") or "").strip()
+    is_demo = scan_id in DEMO_SCAN_IDS
+    log.info("claimed job %s (dataset=%s scan=%s)%s", job_id, dataset, job.get("scan_id"),
+              " [DEMO]" if is_demo else "")
 
     try:
-        # Step 3: make sure the scan's images are on local disk.
-        if job.get("scan_id") and not any(input_dir.glob("*")):
-            n = download_scan(job["scan_id"], input_dir)
-            log.info("downloaded %d images for scan %s", n, job["scan_id"])
+        if is_demo:
+            # Demo scan_id: skip real SAM2 inference, upload a fixed set of
+            # already-rendered preview images instead. Same post_preview()
+            # call a real preview uses, so the contract (multipart upload,
+            # server sets status=preview_ready) is unchanged.
+            post_status(job_id, stage="preview", stage_index=0,
+                        message="Generating previews", status=S_PREVIEWING)
+            previews = demo_preview_files(scan_id)
+            post_preview(job_id, previews)
+            log.info("job %s: [DEMO] uploaded %d canned preview images", job_id, len(previews))
+        else:
+            # Step 3: make sure the scan's images are on local disk.
+            if job.get("scan_id") and not any(input_dir.glob("*")):
+                n = download_scan(job["scan_id"], input_dir)
+                log.info("downloaded %d images for scan %s", n, job["scan_id"])
 
-        # Step 6: render and upload previews.
-        previews = render_preview(job, input_dir, indexed_dir)
-        post_preview(job_id, previews)
-        log.info("uploaded %d preview images for job %s", len(previews), job_id)
+            # Step 6: render and upload previews.
+            previews = render_preview(job, input_dir, indexed_dir)
+            post_preview(job_id, previews)
+            log.info("uploaded %d preview images for job %s", len(previews), job_id)
 
         # Step 9: wait for the user's decision.
         while True:
@@ -559,13 +599,31 @@ def handle_job(job: dict) -> None:
             instr = current.get("instructions") or {}
             decision = instr.get("decision")
             if decision == "redo":
-                log.info("job %s: redo — re-rendering preview", job_id)
                 job["points_json"] = instr.get("points_json", job["points_json"])
-                previews = render_preview(job, input_dir, indexed_dir)
-                post_preview(job_id, previews)
+                if is_demo:
+                    post_preview(job_id, demo_preview_files(scan_id))
+                    log.info("job %s: [DEMO] redo — re-uploaded canned preview", job_id)
+                else:
+                    log.info("job %s: redo — re-rendering preview", job_id)
+                    previews = render_preview(job, input_dir, indexed_dir)
+                    post_preview(job_id, previews)
                 continue
             if decision in ("confirm", "use_existing"):
                 break
+
+        if is_demo:
+            # Skip real COLMAP/SuGaR/PGSR entirely. A completed reconstruction
+            # for this scan_id already exists in HESTIA; nefele_ui's /results
+            # page fetches it independently by scan_id, so the demo job only
+            # needs to reach status=done without erroring — it doesn't need
+            # to touch the reconstruction record itself.
+            post_status(job_id, stage="running", stage_index=0,
+                        message="Training reconstruction", status=S_RUNNING)
+            time.sleep(2)
+            post_status(job_id, stage="done", stage_index=99,
+                        message="reconstruction complete", status=S_DONE)
+            log.info("job %s done [DEMO]", job_id)
+            return
 
         # Resolve the reconstruction model and (re)write the .model file that
         # run_pipeline.sh reads. Priority:
