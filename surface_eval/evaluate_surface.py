@@ -70,11 +70,21 @@ def point_to_surface(scene, points) -> np.ndarray:
 
 def prealign(test_mesh, gt_mesh, args):
     """Domain-specific heuristic pre-alignment for PyBullet-vs-baseline
-    inputs: fixed X rotation, recenter, then scale the test mesh so its
+    inputs: fixed XYZ rotation, recenter, then scale the test mesh so its
     bounding-box extent matches the (rescaled) GT extent. Skip with
-    --no-prealign when both inputs already share a frame/scale."""
-    rad = math.radians(args.rotation_x)
-    R = test_mesh.get_rotation_matrix_from_xyz((rad, 0.0, 0.0))
+    --no-prealign when both inputs already share a frame/scale.
+
+    The right rotation is usually not obvious up front for an externally
+    sourced reference mesh (unknown up-axis/export convention) — if ICP
+    fitness comes back low (~<0.5) after a first try, search for a better
+    one, e.g.:
+        for rx in 0 90 180 270; do for ry in 0 90 180 270; do
+          evaluate_surface.py gt.obj test.ply --scale 1.0 \\
+            --rotation-x $rx --rotation-y $ry --no-html
+        done; done
+    and keep the [icp] fitness= line for each — pick the highest."""
+    rad = (math.radians(args.rotation_x), math.radians(args.rotation_y), math.radians(args.rotation_z))
+    R = test_mesh.get_rotation_matrix_from_xyz(rad)
     test_mesh.rotate(R, center=test_mesh.get_center())
     gt_mesh.translate(-gt_mesh.get_center())
     test_mesh.translate(-test_mesh.get_center())
@@ -147,8 +157,13 @@ def main() -> None:
                      help="skip the fixed rotation/scale step (inputs already share a frame)")
     ap.add_argument("--rotation-x", type=float, default=-90.0,
                      help="prealign: degrees to rotate the test mesh about X (default: -90)")
+    ap.add_argument("--rotation-y", type=float, default=0.0,
+                     help="prealign: degrees to rotate the test mesh about Y (default: 0)")
+    ap.add_argument("--rotation-z", type=float, default=0.0,
+                     help="prealign: degrees to rotate the test mesh about Z (default: 0)")
     ap.add_argument("--scale", type=float, default=0.015,
-                     help="prealign: GT scale factor, e.g. PyBullet units (default: 0.015)")
+                     help="prealign: GT scale factor — 1.0 for two real-world-scale meshes, "
+                          "0.015 (default) only makes sense for the original PyBullet convention")
     ap.add_argument("--voxel-size", type=float, default=0.002)
     ap.add_argument("--y-threshold", type=float, default=None,
                      help="drop points with y below this (e.g. a PyBullet floor plane)")
