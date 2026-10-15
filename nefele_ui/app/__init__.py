@@ -18,7 +18,7 @@ import logging
 import os
 import secrets
 
-from flask import Flask, session, url_for
+from flask import Flask, Request, session, url_for
 
 from .auth import current_user_id, init_auth
 from .config import Config, load_config
@@ -62,6 +62,14 @@ from .routes import (  # noqa: E402  (must follow activate_dataset — see above
 )
 
 
+class BulkUploadRequest(Request):
+    # Werkzeug's default max_form_parts (1000) rejects a /setup upload once
+    # the dataset has that many images — each file is its own multipart
+    # part, and real datasets run into the hundreds already (dress_demo has
+    # 519). Raised well above any realistic single upload.
+    max_form_parts = 100_000
+
+
 def create_app() -> Flask:
     logging.basicConfig(
         level=logging.DEBUG if os.environ.get("FLASK_DEBUG") == "1" else logging.INFO,
@@ -70,6 +78,7 @@ def create_app() -> Flask:
 
     cfg = load_config()
     app = Flask(__name__, template_folder="templates", static_folder="static")
+    app.request_class = BulkUploadRequest
     # Disable Flask's default 12h static cache + re-read Jinja templates on
     # every request so CSS/JS/HTML edits land on the next browser refresh
     # instead of leaving users stuck.

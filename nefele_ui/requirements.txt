@@ -4,3 +4,4 @@ python-dotenv
 requests
 flask-login
 opencv-python-headless
+requests_toolbelt

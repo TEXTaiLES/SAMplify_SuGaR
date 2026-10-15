@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import requests
+from requests_toolbelt import MultipartEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,38 @@ def download_scan(scan_id: str, dest_dir: Path, on_progress=None) -> int:
     return total
 
 
+class _LazyFile:
+    """A file-like object that opens lazily and reports its remaining length,
+    so MultipartEncoder can stream the upload instead of buffering every
+    image's bytes (and holding every file descriptor open) at once — the old
+    code opened all N files up front before sending anything."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.size = path.stat().st_size
+        self.pos = 0
+        self._fh = None
+
+    @property
+    def len(self) -> int:
+        # MultipartEncoder reads `len` as the bytes still left to send
+        return self.size - self.pos
+
+    def read(self, size: int = -1) -> bytes:
+        if self._fh is None:
+            self._fh = open(self.path, "rb")
+        data = self._fh.read(size)
+        self.pos += len(data)
+        if self.pos >= self.size:
+            self.close()
+        return data
+
+    def close(self) -> None:
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+
+
 def upload_robot_images(image_paths: List[Path], scan_id: str | None = None) -> dict:
     """POST local images to HESTIA /robot-images (diagram step 1b).
 
@@ -152,34 +185,33 @@ def upload_robot_images(image_paths: List[Path], scan_id: str | None = None) -> 
     metadata). When ``scan_id`` is omitted HESTIA generates one and returns it.
 
     Returns the parsed body: ``{message, scan_id, uploaded_files}``.
+
+    HESTIA processes each file essentially sequentially (MinIO upload + DB
+    insert + two blocking Kafka flushes per image), so a real dataset's
+    upload can legitimately take minutes — the long read timeout here is
+    deliberate, not a bug. The 30s connect timeout still fails fast if
+    HESTIA itself is unreachable.
     """
-    files: list = []
-    open_handles: list = []
-    metadata_map: dict = {}
+    paths = [Path(p) for p in image_paths]
+    lazy_files = [_LazyFile(p) for p in paths]
+    fields: list = [("metadata_map", json.dumps({p.name: {} for p in paths}))]
+    if scan_id:
+        fields.append(("scan_id", scan_id))
+    fields += [("file", (p.name, lf, "image/jpeg")) for p, lf in zip(paths, lazy_files)]
+
     try:
-        for p in image_paths:
-            p = Path(p)
-            fh = open(p, "rb")
-            open_handles.append(fh)
-            files.append(("file", (p.name, fh, "image/jpeg")))
-            metadata_map[p.name] = {}
-
-        data = {"metadata_map": json.dumps(metadata_map)}
-        if scan_id:
-            data["scan_id"] = scan_id
-
+        encoder = MultipartEncoder(fields=fields)
         r = requests.post(
             ROBOT_IMAGES_EP,
-            headers=_headers(),
-            files=files,
-            data=data,
-            timeout=300,
+            headers={**_headers(), "Content-Type": encoder.content_type},
+            data=encoder,
+            timeout=(30, 3600),
         )
         r.raise_for_status()
         return r.json()
     finally:
-        for fh in open_handles:
-            fh.close()
+        for lf in lazy_files:
+            lf.close()
 
 
 def upload_reconstruction(scan_id: str, obj_path: Path, mtl_path: Path | None, texture_path: Path | None) -> dict:
