@@ -708,9 +708,18 @@ def run_kafka_consumer() -> None:
 
     The message body is just a notification — read full job state from HESTIA
     via GET /vm-comms/<job_id>.
+
+    Self-healing: the broker has been observed to go silent for long stretches
+    (host reachable, but port 29092 stops accepting/serving) while the TCP
+    sockets librdkafka already holds stay ``ESTABLISHED`` at the kernel level —
+    no error ever surfaces, poll() just returns None forever, and the worker
+    sits there claiming nothing until someone notices and restarts the
+    service by hand. To avoid that, this loop actively probes broker health
+    on an interval and forces a brand-new Consumer (fresh TCP connections) if
+    contact has been lost for too long — see KAFKA_MAX_SILENT_S below.
     """
     try:
-        from confluent_kafka import Consumer
+        from confluent_kafka import Consumer, KafkaException
     except ImportError:
         log.error("KAFKA_BROKER is set but confluent_kafka is not installed "
                   "(pip install confluent_kafka). Falling back to polling.")
@@ -722,53 +731,111 @@ def run_kafka_consumer() -> None:
     topic = os.environ.get("KAFKA_TOPIC_JOB_CREATED", "nefele_job_created")
     group = os.environ.get("KAFKA_GROUP_ID", "sam-worker")
 
-    consumer = Consumer({
-        "bootstrap.servers": broker,
-        "group.id": group,
-        # "latest" → on a fresh start (no committed offset) only consume NEW
-        # messages, never replay history.  "earliest" caused old jobs to be
-        # re-processed whenever the consumer group lost its offset (e.g. after
-        # a MAX_POLL_EXCEEDED rebalance killed the previous process mid-run).
-        "auto.offset.reset": "latest",
-        "enable.auto.commit": True,
-        # Allow up to 2 hours between poll() calls so a long-running pipeline
-        # (SAM2 + COLMAP + SuGaR/PGSR can take 60-90 min) doesn't trigger a
-        # MAX_POLL_EXCEEDED rebalance and lose the committed offset.
-        "max.poll.interval.ms": 7200000,
-        # Keep the broker heartbeat alive even while handle_job() blocks the
-        # poll loop (heartbeats run on a background thread).
-        "session.timeout.ms": 60000,
-        "heartbeat.interval.ms": 20000,
-    })
-    consumer.subscribe([topic])
+    # How often to actively probe broker health while idle (a plain poll()
+    # timeout proves nothing — it returns None just as happily whether the
+    # broker is fine-but-quiet or completely unreachable).
+    health_check_interval = float(os.environ.get("KAFKA_HEALTH_CHECK_INTERVAL_S", "60"))
+    # Force-recreate the consumer if we've had zero confirmed contact with
+    # the broker (a delivered message, or a successful health probe) for
+    # this long. Comfortably above health_check_interval so at least a
+    # couple of probes get a chance to fail first.
+    max_silent_s = float(os.environ.get("KAFKA_MAX_SILENT_S", "180"))
+
+    def _make_consumer() -> "Consumer":
+        c = Consumer({
+            "bootstrap.servers": broker,
+            "group.id": group,
+            # "latest" → on a fresh start (no committed offset) only consume
+            # NEW messages, never replay history. "earliest" caused old jobs
+            # to be re-processed whenever the consumer group lost its offset
+            # (e.g. after a MAX_POLL_EXCEEDED rebalance killed the previous
+            # process mid-run).
+            "auto.offset.reset": "latest",
+            "enable.auto.commit": True,
+            # Allow up to 2 hours between poll() calls so a long-running
+            # pipeline (SAM2 + COLMAP + SuGaR/PGSR can take 60-90 min)
+            # doesn't trigger a MAX_POLL_EXCEEDED rebalance and lose the
+            # committed offset.
+            "max.poll.interval.ms": 7200000,
+            # Keep the broker heartbeat alive even while handle_job() blocks
+            # the poll loop (heartbeats run on a background thread).
+            "session.timeout.ms": 60000,
+            "heartbeat.interval.ms": 20000,
+            # Let the OS notice a truly dead peer (no FIN/RST ever arrives
+            # from a silently-vanished broker) instead of the socket sitting
+            # ESTABLISHED forever. Kernel keepalive timers are slow on their
+            # own — this is a second line of defense, not the primary fix.
+            "socket.keepalive.enable": True,
+        })
+        c.subscribe([topic])
+        return c
+
     log.info("worker_poller (Kafka mode) — broker=%s topic=%s group=%s",
              broker, topic, group)
 
-    try:
-        while True:
-            msg = consumer.poll(1.0)
-            if msg is None:
-                continue
-            if msg.error():
-                log.error("Kafka error: %s", msg.error())
-                continue
+    while True:  # outer loop: (re)create the consumer whenever it goes stale
+        consumer = _make_consumer()
+        now = time.monotonic()
+        last_contact = now
+        last_health_check = now
+        try:
+            while True:
+                msg = consumer.poll(1.0)
+                now = time.monotonic()
+
+                if msg is not None:
+                    if msg.error():
+                        log.error("Kafka error: %s", msg.error())
+                    else:
+                        last_contact = now
+                        try:
+                            event = json.loads(msg.value().decode("utf-8"))
+                        except Exception as e:
+                            log.error("ignoring malformed Kafka message: %s", e)
+                            continue
+                        job_id = event.get("job_id") or event.get("id")
+                        if not job_id:
+                            log.warning("nefele_job_created event lacks job_id: %s", event)
+                            continue
+                        try:
+                            job = get_job(job_id)
+                        except requests.RequestException as e:
+                            log.error("GET job %s failed: %s — skipping", job_id, e)
+                            continue
+                        handle_job(job)
+                        # handle_job() can block for up to ~2h; treat its
+                        # return as fresh contact so we don't immediately
+                        # "time out" on timestamps from before it started.
+                        now = time.monotonic()
+                        last_contact = now
+                        last_health_check = now
+                    continue
+
+                # No message this tick. Periodically force a real round-trip
+                # to the broker instead of trusting silence.
+                if now - last_health_check >= health_check_interval:
+                    last_health_check = now
+                    try:
+                        consumer.list_topics(topic, timeout=10)
+                        last_contact = now
+                    except KafkaException as e:
+                        log.warning("Kafka health check failed: %s", e)
+
+                if now - last_contact >= max_silent_s:
+                    log.error(
+                        "no Kafka broker contact for %.0fs (last health check %.0fs ago) — "
+                        "forcing a fresh consumer connection",
+                        now - last_contact, now - last_health_check,
+                    )
+                    break  # drop out to the outer loop: close + recreate
+        except Exception:
+            log.exception("Kafka consumer loop crashed — recreating consumer")
+        finally:
             try:
-                event = json.loads(msg.value().decode("utf-8"))
-            except Exception as e:
-                log.error("ignoring malformed Kafka message: %s", e)
-                continue
-            job_id = event.get("job_id") or event.get("id")
-            if not job_id:
-                log.warning("nefele_job_created event lacks job_id: %s", event)
-                continue
-            try:
-                job = get_job(job_id)
-            except requests.RequestException as e:
-                log.error("GET job %s failed: %s — skipping", job_id, e)
-                continue
-            handle_job(job)
-    finally:
-        consumer.close()
+                consumer.close()
+            except Exception:
+                pass
+        time.sleep(5)  # brief pause before reconnecting — avoid a tight crash loop
 
 
 def ensure_sam2_running() -> None:
